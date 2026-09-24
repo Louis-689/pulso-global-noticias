@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, BrainCircuit, CheckCircle2, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Globe2, Info, Landmark, Link2, Loader2, MapPin, Network, Newspaper, Pause, Radio, RefreshCw, Search, SlidersHorizontal, Sparkles, TrendingUp, Volume2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Folder, FolderOpen, Globe2, Info, Landmark, Link2, Loader2, MapPin, Network, Newspaper, Pause, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles, TrendingUp, Volume2, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { countries } from "@/lib/pulse-geography";
@@ -12,11 +12,17 @@ import type { PulseArticle, PulseCategory, PulseConnection, PulseMode, PulseResp
 const PulseGlobe = dynamic(() => import("@/components/pulse-globe"), { ssr: false, loading: () => <MapLoading label="Preparando la Tierra…" /> });
 
 const CATEGORIES: Array<[PulseCategory, string]> = [
-  ["all", "Panorama"], ["politics", "Política"], ["economy", "Economía"],
+  ["all", "Panorama mundial"], ["politics", "Política"], ["economy", "Economía y mercados"],
   ["technology", "Tecnología"], ["science", "Ciencia"], ["health", "Salud"],
-  ["climate", "Clima"], ["security", "Seguridad"], ["culture", "Cultura"],
+  ["climate", "Clima y ambiente"], ["security", "Conflictos y seguridad"], ["culture", "Cultura y sociedad"],
   ["sports", "Deportes"], ["education", "Educación"],
 ];
+const CATEGORY_FOLDERS: Array<{ id: string; label: string; note: string; tone: string; categories: PulseCategory[] }> = [
+  { id: "world", label: "Mundo y poder", note: "Panorama, política, economía y seguridad", tone: "terracotta", categories: ["all", "politics", "economy", "security"] },
+  { id: "knowledge", label: "Conocimiento y futuro", note: "Tecnología, ciencia, salud y educación", tone: "lapis", categories: ["technology", "science", "health", "education"] },
+  { id: "life", label: "Planeta y sociedad", note: "Clima, cultura y deportes", tone: "olive", categories: ["climate", "culture", "sports"] },
+];
+const categoryLabel = (id: PulseCategory) => CATEGORIES.find(([value]) => value === id)?.[1] || id;
 const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "Última hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
 type FeedMode = "latest" | "signals" | "positive" | "negative" | "saved";
 type SortMode = "newest" | "coverage" | "signal";
@@ -69,6 +75,7 @@ export function GlobalPulse() {
   const [scenarioLens, setScenarioLens] = useState<ScenarioLens>("human");
   const [scenarioHorizon, setScenarioHorizon] = useState<ScenarioHorizon>("24h");
   const [methodOpen, setMethodOpen] = useState(false);
+  const [openFolder, setOpenFolder] = useState("world");
   const [speaking, setSpeaking] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
@@ -219,13 +226,23 @@ export function GlobalPulse() {
         <button className="rail-action" onClick={() => setScenarioOpen(true)}><Bot /><span>Escenarios</span></button>
         <button className={feedMode === "saved" ? "rail-action active" : "rail-action"} onClick={() => setFeedMode(feedMode === "saved" ? "latest" : "saved")}><Bookmark /><span>Guardadas <b>{saved.length}</b></span></button>
       </div>
-      <div className="rail-section categories"><span className="eyebrow">TEMAS</span>{CATEGORIES.map(([id, label]) => <button key={id} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{label}<ChevronRight /></button>)}</div>
+      <div className="rail-section categories"><span className="eyebrow">ARCHIVO TEMÁTICO</span>{CATEGORY_FOLDERS.map((folder) => {
+        const isOpen = openFolder === folder.id;
+        const containsActive = folder.categories.includes(category);
+        return <div className={`theme-folder ${folder.tone} ${isOpen ? "open" : ""} ${containsActive ? "contains-active" : ""}`} key={folder.id}>
+          <button className="folder-cover" aria-expanded={isOpen} aria-controls={`folder-${folder.id}`} onClick={() => setOpenFolder(isOpen ? "" : folder.id)}>
+            <span className="folder-emblem">{isOpen ? <FolderOpen /> : <Folder />}</span><span><strong>{folder.label}</strong><small>{folder.note}</small></span>{isOpen ? <ChevronDown /> : <ChevronRight />}
+          </button>
+          <div className="folder-files" id={`folder-${folder.id}`}><div>{folder.categories.map((id) => <button key={id} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{categoryLabel(id)}<ChevronRight /></button>)}</div></div>
+        </div>;
+      })}</div>
       <button className="method-link" onClick={() => setMethodOpen(true)}><Info />Cómo se calcula</button>
     </aside>
 
     <section className="workspace">
-      <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos situados solo cuando el lugar aparece explícitamente en la fuente."}</p></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
+      <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos situados solo cuando el lugar aparece explícitamente en la fuente."}</p><div className="source-ribbon"><ShieldCheck /><span>Fuentes públicas trazables</span>{data?.sources.slice(0, 4).map((source) => <span className={`source-seal ${source.status}`} key={source.name}>{source.name}<i>{source.count}</i></span>)}</div></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
       <div className="filter-bar">
+        <label className="mobile-topic"><span>Tema</span><select value={category} onChange={(event) => setCategory(event.target.value as PulseCategory)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label><span>País</span><select value={country} onChange={(event) => selectCountry(event.target.value)}><option value="">Todo el mundo</option>{countries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
         <label><span>Ventana</span><select value={timespan} onChange={(event) => setTimespan(event.target.value as PulseTimespan)}>{WINDOWS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <form className="place-search" onSubmit={searchPlace}><label htmlFor="place-query">Región, ciudad o pueblo</label><div><MapPin /><input id="place-query" value={placeDraft} onChange={(event) => setPlaceDraft(event.target.value)} placeholder={country ? `Buscar dentro de ${countryName}` : "Ej. Písac, Cusco"} /><button disabled={placeLoading}>{placeLoading ? <Loader2 className="spin" /> : "Ir"}</button></div></form>
@@ -253,6 +270,6 @@ export function GlobalPulse() {
 
     <Dialog open={!!selectedConnection} onOpenChange={(open) => !open && setSelectedConnection(null)}><DialogContent className="evidence-dialog"><DialogHeader><DialogTitle>Conexión documentada</DialogTitle><DialogDescription>{selectedConnection?.label}. La línea existe porque los países aparecen en el mismo titular; no implica causalidad.</DialogDescription></DialogHeader><div className="evidence-list">{connectionArticles.map((article) => <button key={article.id} onClick={() => { setSelectedConnection(null); setSelectedArticle(article); }}><Link2 /><span>{article.title}<small>{sourceLabel(article)}</small></span><ChevronRight /></button>)}</div></DialogContent></Dialog>
     <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Horizontes de comportamiento</DialogTitle><DialogDescription>Explora hipótesis humanas, económicas y científicas a partir de la muestra visible. No predice decisiones individuales ni garantiza acontecimientos.</DialogDescription></DialogHeader><div className="scenario-toolbar"><div role="tablist" aria-label="Lente del escenario">{(["human", "economy", "science"] as ScenarioLens[]).map((lens) => <button key={lens} role="tab" aria-selected={scenarioLens === lens} className={scenarioLens === lens ? "active" : ""} onClick={() => setScenarioLens(lens)}>{lens === "human" ? "Humano" : lens === "economy" ? "Económico" : "Científico"}</button>)}</div><label>Horizonte<select value={scenarioHorizon} onChange={(event) => setScenarioHorizon(event.target.value as ScenarioHorizon)}><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div><div className="scenario-status"><span>EVIDENCIA {scenarioModel.evidence.toUpperCase()}</span><strong>{scenarioModel.total} registros · horizonte {scenarioHorizon === "24h" ? "24 horas" : scenarioHorizon === "7d" ? "7 días" : "30 días"}</strong><p>Lectura direccional: si la composición de fuentes se mantiene, estos indicadores describen la continuidad del pulso actual; cuanto mayor sea el horizonte, mayor es la incertidumbre.</p></div><div className="scenario-grid">{scenarioModel.cards.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> una predicción calibrada requiere series históricas, variables externas, evaluación contra datos futuros y márgenes de error. Aquí se muestran escenarios trazables, no profecías.</p></div></DialogContent></Dialog>
-    <Dialog open={methodOpen} onOpenChange={setMethodOpen}><DialogContent className="method-dialog"><DialogHeader><span className="modal-kicker"><CheckCircle2 /> METODOLOGÍA</span><DialogTitle>Qué muestra Pulso Global</DialogTitle><DialogDescription>Un visor de cobertura pública con límites visibles.</DialogDescription></DialogHeader><div className="method-steps"><div><b>01</b><p><strong>Recoge</strong> titulares, documentos oficiales y señales públicas con hora verificable.</p></div><div><b>02</b><p><strong>Ubica</strong> países nombrados explícitamente o coordenadas entregadas por la fuente.</p></div><div><b>03</b><p><strong>Relaciona</strong> países co-mencionados en el mismo titular y conserva evidencia.</p></div><div><b>04</b><p><strong>Expone límites</strong>: una ausencia significa “sin dato en esta muestra”, no “no ocurrió”.</p></div></div></DialogContent></Dialog>
+    <Dialog open={methodOpen} onOpenChange={setMethodOpen}><DialogContent className="method-dialog"><DialogHeader><span className="modal-kicker"><CheckCircle2 /> MISIÓN Y MÉTODO</span><DialogTitle>Un atlas vivo, no un oráculo</DialogTitle><DialogDescription>Pulso Global organiza evidencia pública reciente desde el mundo hasta la localidad. Nunca convierte una señal en certeza ni promete acceso a información privada.</DialogDescription></DialogHeader><div className="mission-seal"><Globe2 /><p><strong>Misión</strong> Hacer comprensible el pulso humano, económico, científico y ambiental con origen, tiempo, geografía e incertidumbre visibles.</p></div><div className="method-steps"><div><b>01</b><p><strong>Recoge</strong> titulares, documentos oficiales y señales públicas con hora verificable.</p></div><div><b>02</b><p><strong>Contrasta el estado</strong> de cada origen y distingue noticia, documento, evento y prepublicación.</p></div><div><b>03</b><p><strong>Ubica</strong> solo países nombrados o coordenadas entregadas por la fuente.</p></div><div><b>04</b><p><strong>Ordena</strong> por tiempo, alcance o intensidad lexical sin fabricar relevancia.</p></div><div><b>05</b><p><strong>Relaciona</strong> países co-mencionados y conserva la evidencia que origina cada conexión.</p></div><div><b>06</b><p><strong>Expone límites</strong>: “sin dato en esta muestra” nunca significa “no ocurrió”.</p></div></div></DialogContent></Dialog>
   </main>;
 }
