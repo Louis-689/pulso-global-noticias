@@ -1,4 +1,25 @@
-# vinext-starter
+# Pulso Global
+
+Centro geoespacial de noticias públicas en tiempo casi real. Combina un globo 3D interactivo, búsqueda jerárquica de lugares, señales públicas tempranas y un laboratorio de escenarios con trazabilidad y límites visibles.
+
+## Alcance y fuentes
+
+- Noticias: GDELT y Google News RSS, con deduplicación, filtros temporales y degradación controlada cuando un proveedor falla.
+- Señales tempranas: USGS, NASA y arXiv. Son indicios públicos, no información privada ni confirmaciones de hechos futuros.
+- Geografía: coincidencias explícitas de lugares en titulares y búsqueda GeoNames vía Open-Meteo; no se inventa cobertura local.
+- Predicción: escenarios exploratorios con supuestos editables. No predice conductas individuales ni presenta certeza.
+
+## Desarrollo
+
+```sh
+npm ci
+npm run dev
+npm run lint
+npx tsc --noEmit
+npm run build
+```
+
+## Base técnica
 
 A clean full-stack starter running on [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and Drizzle support.
 

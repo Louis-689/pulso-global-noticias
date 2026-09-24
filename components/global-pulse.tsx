@@ -1,190 +1,217 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, ChevronRight, Clock3, GitBranch, Globe2, Info, LocateFixed, Radio, Search, ShieldCheck, TrendingDown, TrendingUp, Volume2, VolumeX } from "lucide-react";
-import { feature } from "topojson-client";
-import worldAtlas from "world-atlas/countries-110m.json";
-import { Slider } from "@/components/ui/slider";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, CheckCircle2, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Globe2, Info, Link2, Loader2, MapPin, Network, Newspaper, Pause, RefreshCw, Search, Sparkles, Volume2, X } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { countries } from "@/lib/pulse-geography";
+import type { PlaceResult, PlacesResponse } from "@/lib/pulse-places-types";
+import type { PulseArticle, PulseCategory, PulseConnection, PulseMode, PulseResponse, PulseTimespan } from "@/lib/pulse-types";
 
-const Globe = dynamic(() => import("react-globe.gl"), { ssr: false });
+const PulseGlobe = dynamic(() => import("@/components/pulse-globe"), { ssr: false, loading: () => <MapLoading label="Preparando la Tierra…" /> });
 
-type PulsePoint = { id: string; lat: number; lng: number; name: string; count: number };
-type PulseArticle = { url: string; title: string; domain: string; sourceCountry: string; language: string; seenDate: string; sentiment: number };
-type PulseConnection = { startLat: number; startLng: number; endLat: number; endLng: number; label: string; weight: number };
-type WebMcpContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
-type PulseResponse = {
-  points: PulsePoint[];
-  articles: PulseArticle[];
-  connections: PulseConnection[];
-  rankings: { positive: PulseArticle[]; negative: PulseArticle[] };
-  tension: number;
-  pointBasis: "mentionedLocations" | "sourceCountries" | "mentionedCountries";
-  dataProvider?: string;
-  fetchedAt: string;
-  partial?: boolean;
-};
-
-const categories = [
+const CATEGORIES: Array<[PulseCategory, string]> = [
   ["all", "Panorama"], ["politics", "Política"], ["economy", "Economía"],
   ["technology", "Tecnología"], ["science", "Ciencia"], ["health", "Salud"],
   ["climate", "Clima"], ["security", "Seguridad"], ["culture", "Cultura"],
-] as const;
+  ["sports", "Deportes"], ["education", "Educación"],
+];
+const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "Última hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
+type FeedMode = "latest" | "positive" | "negative" | "saved";
+type WebMcpContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
 
-const timeWindows = [
-  ["1h", "1 h"], ["6h", "6 h"], ["12h", "12 h"], ["24h", "24 h"], ["48h", "48 h"], ["7d", "7 días"],
-] as const;
-
-const countries = feature(
-  worldAtlas as unknown as Parameters<typeof feature>[0],
-  (worldAtlas as unknown as { objects: { countries: Parameters<typeof feature>[1] } }).objects.countries,
-) as unknown as { features: object[] };
-
-function relativeTime(value: string) {
-  if (!value) return "reciente";
-  const normalized = /^\d{14}$/.test(value)
-    ? `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T${value.slice(8, 10)}:${value.slice(10, 12)}:${value.slice(12, 14)}Z`
-    : value;
-  const time = new Date(normalized).getTime();
-  if (!Number.isFinite(time)) return "reciente";
-  const minutes = Math.max(1, Math.round((Date.now() - time) / 60000));
+function MapLoading({ label }: { label: string }) { return <div className="map-loading"><Loader2 className="spin" aria-hidden="true" /><span>{label}</span></div>; }
+function relativeTime(value: string | null) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "hora no publicada";
+  const minutes = Math.max(0, Math.floor((Date.now() - Date.parse(value)) / 60000));
+  if (minutes < 1) return "hace menos de 1 min";
   if (minutes < 60) return `hace ${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  return hours < 24 ? `hace ${hours} h` : `hace ${Math.round(hours / 24)} d`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `hace ${hours} h` : `hace ${Math.floor(hours / 24)} d`;
+}
+function sourceLabel(article: PulseArticle) { return article.sourceName || article.destinationHost || article.domain; }
+function kindLabel(article: PulseArticle) {
+  return article.kind === "earthquake" ? "Evento sísmico" : article.kind === "preprint" ? "Prepublicación" : article.kind === "official" ? "Fuente oficial" : "Noticia";
+}
+function emptyResponse(mode: PulseMode, timespan: PulseTimespan, category: PulseCategory, message: string): PulseResponse {
+  return { mode, timespan, category, pointBasis: "mentionedCountries", dataProvider: "Sin resultados disponibles", fetchedAt: new Date().toISOString(), partial: true, sources: [], errors: [message], coverageNote: message, articles: [], points: [], connections: [], rankings: { positive: [], negative: [] }, tension: null, stats: { total: 0, located: 0, unlocated: 0, positive: 0, negative: 0, neutral: 0, scored: 0 } };
 }
 
 export function GlobalPulse() {
-  const [category, setCategory] = useState("all");
+  const [category, setCategory] = useState<PulseCategory>("all");
+  const [timespan, setTimespan] = useState<PulseTimespan>("24h");
+  const [mode, setMode] = useState<PulseMode>("news");
   const [data, setData] = useState<PulseResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [searchDraft, setSearchDraft] = useState("");
   const [query, setQuery] = useState("");
-  const [selectedPoint, setSelectedPoint] = useState<PulsePoint | null>(null);
-  const [timeIndex, setTimeIndex] = useState(3);
-  const [showConnections, setShowConnections] = useState(true);
-  const [rankMode, setRankMode] = useState<"positive" | "negative">("positive");
+  const [country, setCountry] = useState("");
+  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [placeDraft, setPlaceDraft] = useState("");
+  const [placeResults, setPlaceResults] = useState<PlaceResult[]>([]);
+  const [placeLoading, setPlaceLoading] = useState(false);
+  const [placeMessage, setPlaceMessage] = useState("");
+  const [selectedArticle, setSelectedArticle] = useState<PulseArticle | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<PulseConnection | null>(null);
+  const [feedMode, setFeedMode] = useState<FeedMode>("latest");
+  const [saved, setSaved] = useState<string[]>([]);
+  const [showConnections, setShowConnections] = useState(false);
+  const [flatMap, setFlatMap] = useState(false);
+  const [resetKey, setResetKey] = useState(0);
+  const [scenarioOpen, setScenarioOpen] = useState(false);
+  const [methodOpen, setMethodOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const globeRef = useRef<{ pointOfView: (position: { lat: number; lng: number; altitude: number }, ms?: number) => void } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const requestRef = useRef(0);
+  const countryName = countries.find((item) => item.code === country)?.name;
+
+  const fetchPulse = useCallback(async (signal?: AbortSignal) => {
+    const requestId = ++requestRef.current;
+    setLoading(true); setError(""); setData(null);
+    const params = new URLSearchParams({ category, timespan, mode });
+    if (country) params.set("country", country);
+    if (query) params.set("q", query);
+    try {
+      const response = await fetch(`/api/pulse?${params}`, { signal, headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error(String(response.status));
+      const result = await response.json() as PulseResponse;
+      if (requestRef.current === requestId) setData(result);
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      if (requestRef.current !== requestId) return;
+      const message = "No pudimos actualizar las fuentes. Vuelve a intentarlo.";
+      setError(message); setData(emptyResponse(mode, timespan, category, message));
+    } finally { if (requestRef.current === requestId) setLoading(false); }
+  }, [category, timespan, mode, country, query]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal); });
+    return () => controller.abort();
+  }, [fetchPulse]);
+  useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === "visible") void fetchPulse(); }, 15 * 60 * 1000); return () => window.clearInterval(timer); }, [fetchPulse]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try { setSaved(JSON.parse(localStorage.getItem("pulso-global-saved") || "[]")); } catch { setSaved([]); }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); } };
+    window.addEventListener("keydown", shortcut); return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   useEffect(() => {
     const context = (document as Document & { modelContext?: WebMcpContext }).modelContext;
     if (!context?.registerTool) return;
     const lifecycle = new AbortController();
     void Promise.resolve(context.registerTool({
-      name: "configure_pulse_view",
-      title: "Configurar radar de noticias",
-      description: "Cambia la categoría y la ventana temporal visibles en Pulso Global.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          category: { type: "string", enum: categories.map(([id]) => id) },
-          timeWindow: { type: "string", enum: timeWindows.map(([id]) => id) },
-        },
-        additionalProperties: false,
-      },
-      annotations: { readOnlyHint: false, untrustedContentHint: false },
-      async execute(input: unknown) {
+      name: "configure_pulse_view", title: "Configurar Pulso Global",
+      description: "Cambia la cobertura por categoría, ventana, modo, país o consulta.",
+      inputSchema: { type: "object", additionalProperties: false, properties: {
+        category: { type: "string", enum: CATEGORIES.map(([id]) => id) }, timespan: { type: "string", enum: WINDOWS.map(([id]) => id) },
+        mode: { type: "string", enum: ["news", "early"] }, country: { type: "string", pattern: "^[A-Z]{2}$" }, query: { type: "string", maxLength: 100 },
+      } }, annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute: async (input: unknown) => {
         if (!input || typeof input !== "object") throw new Error("La entrada debe ser un objeto.");
-        const candidate = input as { category?: string; timeWindow?: string };
-        const categoryIndex = candidate.category ? categories.findIndex(([id]) => id === candidate.category) : -1;
-        const windowIndex = candidate.timeWindow ? timeWindows.findIndex(([id]) => id === candidate.timeWindow) : -1;
-        if (candidate.category && categoryIndex < 0) throw new Error("Categoría no válida.");
-        if (candidate.timeWindow && windowIndex < 0) throw new Error("Ventana temporal no válida.");
-        if (categoryIndex >= 0) setCategory(categories[categoryIndex][0]);
-        if (windowIndex >= 0) setTimeIndex(windowIndex);
-        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        return { category: categoryIndex >= 0 ? categories[categoryIndex][0] : undefined, timeWindow: windowIndex >= 0 ? timeWindows[windowIndex][0] : undefined };
+        const value = input as Record<string, unknown>;
+        if (typeof value.category === "string" && CATEGORIES.some(([id]) => id === value.category)) setCategory(value.category as PulseCategory);
+        if (typeof value.timespan === "string" && WINDOWS.some(([id]) => id === value.timespan)) setTimespan(value.timespan as PulseTimespan);
+        if (value.mode === "news" || value.mode === "early") setMode(value.mode);
+        if (typeof value.country === "string" && /^[A-Z]{2}$/.test(value.country)) setCountry(value.country);
+        if (typeof value.query === "string" && value.query.length <= 100) { setSearchDraft(value.query); setQuery(value.query.trim()); }
+        return { accepted: true };
       },
     }, { signal: lifecycle.signal })).catch(() => undefined);
     return () => lifecycle.abort();
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    fetch(`/api/pulse?category=${category}&timespan=${timeWindows[timeIndex][0]}`, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error("No se pudo consultar GDELT");
-        return response.json() as Promise<PulseResponse>;
-      })
-      .then(setData)
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-        setData({ points: [], articles: [], connections: [], rankings: { positive: [], negative: [] }, tension: 50, pointBasis: "sourceCountries", dataProvider: "Fuentes temporalmente no disponibles", fetchedAt: new Date().toISOString(), partial: true });
-      })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, [category, timeIndex]);
+  const articles = useMemo(() => data?.articles ?? [], [data?.articles]);
+  const visibleArticles = useMemo(() => feedMode === "positive" ? data?.rankings.positive ?? [] : feedMode === "negative" ? data?.rankings.negative ?? [] : feedMode === "saved" ? articles.filter((item) => saved.includes(item.id)) : articles, [feedMode, data?.rankings, articles, saved]);
+  const connectionArticles = useMemo(() => selectedConnection ? articles.filter((item) => selectedConnection.articleIds.includes(item.id)) : [], [selectedConnection, articles]);
+  const scenarios = useMemo(() => {
+    const stats = data?.stats; const scored = stats?.scored || 0; const total = stats?.total || 0;
+    return [
+      { icon: Activity, title: "Presión informativa", value: scored ? `${Math.round(((stats?.negative || 0) / scored) * 100)}%` : "Sin base", text: "Titulares clasificables con vocabulario adverso. No mide emociones de una población." },
+      { icon: Globe2, title: "Alcance geográfico", value: total ? `${Math.round(((stats?.located || 0) / total) * 100)}%` : "Sin base", text: "Parte de la muestra con países mencionados de forma explícita." },
+      { icon: FlaskConical, title: "Señales científicas", value: String(articles.filter((item) => item.kind === "preprint" || item.kind === "official").length), text: "Fuentes oficiales y prepublicaciones presentes en la consulta." },
+    ];
+  }, [data?.stats, articles]);
 
-  const articles = useMemo(() => {
-    const term = query.trim().toLocaleLowerCase("es");
-    if (!term) return data?.articles ?? [];
-    return (data?.articles ?? []).filter((item) => `${item.title} ${item.domain} ${item.sourceCountry}`.toLocaleLowerCase("es").includes(term));
-  }, [data?.articles, query]);
-  const maxCount = Math.max(1, ...(data?.points ?? []).map((point) => point.count));
-
-  function focusPoint(point: object) {
-    const pulsePoint = point as PulsePoint;
-    setSelectedPoint(pulsePoint);
-    globeRef.current?.pointOfView({ lat: pulsePoint.lat, lng: pulsePoint.lng, altitude: 1.35 }, 900);
+  function submitSearch(event: FormEvent) { event.preventDefault(); setQuery(searchDraft.trim().slice(0, 100)); }
+  async function searchPlace(event: FormEvent) {
+    event.preventDefault(); const term = placeDraft.trim();
+    if (term.length < 2) { setPlaceMessage("Escribe al menos dos letras."); return; }
+    setPlaceLoading(true); setPlaceMessage(""); setPlaceResults([]);
+    const params = new URLSearchParams({ q: term }); if (country) params.set("country", country); if (selectedPlace?.region) params.set("parent", selectedPlace.region);
+    try { const response = await fetch(`/api/places?${params}`); const result = await response.json() as PlacesResponse; setPlaceResults(result.results || []); setPlaceMessage(result.error || (result.results.length ? result.coverageNote : "No encontramos ese lugar. Prueba su nombre oficial.")); }
+    catch { setPlaceMessage("La búsqueda geográfica no está disponible ahora."); } finally { setPlaceLoading(false); }
   }
-
+  function choosePlace(place: PlaceResult) { setSelectedPlace(place); setCountry(place.countryCode); setPlaceDraft(place.name); setPlaceResults([]); setSearchDraft(place.name); setQuery(place.name); setMode("news"); }
+  function clearLocation() { setSelectedPlace(null); setCountry(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); setQuery(""); setSearchDraft(""); setResetKey((value) => value + 1); }
+  function selectCountry(code: string) { setSelectedPlace(null); setCountry(code); setQuery(""); setSearchDraft(""); setPlaceMessage(""); }
+  function toggleSaved(article: PulseArticle) { setSaved((current) => { const next = current.includes(article.id) ? current.filter((id) => id !== article.id) : [...current, article.id].slice(-200); localStorage.setItem("pulso-global-saved", JSON.stringify(next)); return next; }); }
   function toggleBriefing() {
     if (!("speechSynthesis" in window)) return;
-    if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
-      return;
-    }
-    const headlines = (data?.articles ?? []).slice(0, 5).map((article, index) => `${index + 1}. ${article.title}`).join(". ");
-    if (!headlines) return;
-    const briefing = new SpeechSynthesisUtterance(`Pulso Global. Estos son los titulares más recientes. ${headlines}`);
-    briefing.lang = "es-ES";
-    briefing.rate = 1.02;
-    briefing.onend = () => setSpeaking(false);
-    briefing.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(briefing);
-    setSpeaking(true);
+    if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
+    if (!visibleArticles.length) return;
+    const utterance = new SpeechSynthesisUtterance(`Pulso Global. ${visibleArticles.slice(0, 5).map((item, index) => `${index + 1}. ${item.title}`).join(". ")}`);
+    utterance.lang = "es-PE"; utterance.rate = 1; utterance.onend = () => setSpeaking(false); utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); setSpeaking(true);
   }
+  const title = selectedPlace?.displayName || countryName || (mode === "early" ? "Señales públicas tempranas" : "Panorama mundial");
 
-  return (
-    <main className="pulse-shell">
-      <header className="topbar">
-        <div className="brand-lockup"><span className="brand-mark"><Globe2 aria-hidden="true" /></span><div><h1>PULSO<span>GLOBAL</span></h1><p>observatorio de noticias</p></div></div>
-        <label className="search-field"><Search aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar país, medio o titular" aria-label="Buscar noticias" /><kbd>⌘ K</kbd></label>
-        <div className="live-cluster"><div className="live-copy"><span className={loading ? "status-dot loading" : "status-dot"} /><div><strong>{loading ? "SINCRONIZANDO" : "EN VIVO"}</strong><small>GDELT · ventana {timeWindows[timeIndex][1]}</small></div></div><button className={speaking ? "briefing-button active" : "briefing-button"} onClick={toggleBriefing} aria-label={speaking ? "Detener briefing" : "Escuchar briefing"}>{speaking ? <VolumeX /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="icon-button" aria-label="Centrar globo" onClick={() => globeRef.current?.pointOfView({ lat: 12, lng: -18, altitude: 2.25 }, 900)}><LocateFixed /></button></div>
-      </header>
+  return <main className="world-console">
+    <header className="app-header">
+      <button className="brand" onClick={clearLocation} aria-label="Volver al panorama mundial"><span className="brand-orbit"><Globe2 /></span><span><strong>PULSO</strong> GLOBAL<small>observatorio geográfico</small></span></button>
+      <form className="global-search" onSubmit={submitSearch} role="search"><Search /><input ref={searchRef} value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Buscar tema, país o titular" aria-label="Buscar noticias" />{searchDraft && <button type="button" className="clear-search" onClick={() => { setSearchDraft(""); setQuery(""); }} aria-label="Limpiar búsqueda"><X /></button>}<kbd>Ctrl K</kbd></form>
+      <div className="header-actions"><button className="header-button" onClick={toggleBriefing} disabled={!visibleArticles.length}>{speaking ? <Pause /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="refresh-button" onClick={() => void fetchPulse()} disabled={loading} aria-label="Actualizar fuentes"><RefreshCw className={loading ? "spin" : ""} /></button></div>
+    </header>
 
-      <aside className="category-rail" aria-label="Categorías">
-        <p className="rail-label">SEÑALES</p>
-        <nav>{categories.map(([id, label]) => <button key={id} className={category === id ? "category-button active" : "category-button"} onClick={() => setCategory(id)} aria-pressed={category === id}><span className="envelope-icon" aria-hidden="true"><i /></span><span>{label}</span></button>)}</nav>
-        <div className="trust-badge"><ShieldCheck /><span>FUENTES<br />TRAZABLES</span></div>
-      </aside>
+    <aside className="side-rail" aria-label="Navegación principal">
+      <div className="rail-section"><span className="eyebrow">VISTA</span>
+        <button className={mode === "news" ? "rail-action active" : "rail-action"} onClick={() => setMode("news")}><Newspaper /><span>Actualidad</span></button>
+        <button className={mode === "early" ? "rail-action active amber" : "rail-action"} onClick={() => setMode("early")}><Sparkles /><span>Señales tempranas</span></button>
+        <button className="rail-action" onClick={() => setScenarioOpen(true)}><Bot /><span>Escenarios</span></button>
+        <button className={feedMode === "saved" ? "rail-action active" : "rail-action"} onClick={() => setFeedMode(feedMode === "saved" ? "latest" : "saved")}><Bookmark /><span>Guardadas <b>{saved.length}</b></span></button>
+      </div>
+      <div className="rail-section categories"><span className="eyebrow">TEMAS</span>{CATEGORIES.map(([id, label]) => <button key={id} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{label}<ChevronRight /></button>)}</div>
+      <button className="method-link" onClick={() => setMethodOpen(true)}><Info />Cómo se calcula</button>
+    </aside>
 
-      <section className="globe-stage" aria-label="Mapa mundial de señales noticiosas">
-        <div className="map-caption"><span><Radio /> RADAR GLOBAL</span><strong>{(data?.points.length ?? 0).toLocaleString("es-ES")} {data?.pointBasis === "mentionedLocations" ? "lugares mencionados" : data?.pointBasis === "mentionedCountries" ? "países mencionados" : "mercados de origen"}</strong></div>
-        <div className="globe-wrap"><Globe ref={globeRef} backgroundColor="rgba(0,0,0,0)" globeImageUrl="https://unpkg.com/three-globe/example/img/earth-night.jpg" bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png" showAtmosphere atmosphereColor="#4ddfd1" atmosphereAltitude={0.16} polygonsData={countries.features} polygonCapColor={() => "rgba(5, 20, 29, 0.10)"} polygonSideColor={() => "rgba(21, 232, 203, 0.015)"} polygonStrokeColor={() => "rgba(92, 226, 210, 0.26)"} pointsData={data?.points ?? []} pointLat="lat" pointLng="lng" pointColor={() => "#ffb547"} pointAltitude={(point) => 0.045 + ((point as PulsePoint).count / maxCount) * 0.16} pointRadius={(point) => 0.12 + Math.sqrt((point as PulsePoint).count / maxCount) * 0.34} pointLabel={(point) => `${(point as PulsePoint).name} · ${(point as PulsePoint).count} artículos`} onPointClick={focusPoint} ringsData={data?.points.slice(0, 16) ?? []} ringLat="lat" ringLng="lng" ringColor={() => (t: number) => `rgba(255, 181, 71, ${Math.max(0, 1 - t)})`} ringMaxRadius={2.1} ringPropagationSpeed={1.1} ringRepeatPeriod={1550} arcsData={showConnections ? (data?.connections ?? []) : []} arcStartLat="startLat" arcStartLng="startLng" arcEndLat="endLat" arcEndLng="endLng" arcLabel="label" arcColor={() => ["rgba(88,227,210,.18)", "rgba(255,181,71,.78)"]} arcAltitude={(arc) => .12 + Math.min(.3, (arc as PulseConnection).weight * .035)} arcStroke={(arc) => .25 + Math.min(.55, (arc as PulseConnection).weight * .08)} arcDashLength={.45} arcDashGap={.9} arcDashAnimateTime={2200} /></div>
-        <div className="globe-toolbar"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><GitBranch />Conexiones <b>{data?.connections?.length ?? 0}</b></button></div>
-        <div className="tension-card" style={{ "--tension": `${data?.tension ?? 50}%` } as React.CSSProperties}><div className="tension-head"><span>ÍNDICE DE TENSIÓN</span><strong>{data?.tension ?? 50}</strong></div><div className="tension-track"><i /></div><p>Tono lexical en la muestra visible</p></div>
-        <div className="ranking-card">
-          <div className="ranking-tabs"><button className={rankMode === "positive" ? "active" : ""} onClick={() => setRankMode("positive")}><TrendingUp />Top</button><button className={rankMode === "negative" ? "active negative" : ""} onClick={() => setRankMode("negative")}><TrendingDown />Flop</button></div>
-          <ol>{(data?.rankings?.[rankMode] ?? []).slice(0, 3).map((item, index) => <li key={`${rankMode}-${item.url}`}><b>0{index + 1}</b><span>{item.title}</span></li>)}</ol>
-          {(data?.rankings?.[rankMode]?.length ?? 0) === 0 && <p className="no-ranking">Sin suficientes señales clasificables.</p>}
-          <details className="method-details"><summary><Info /> metodología</summary><p>Ordena titulares reales de esta muestra por términos de tono visibles. Es una señal exploratoria, no una verificación editorial.</p></details>
-        </div>
-        <div className="map-legend" aria-label="Leyenda del mapa"><span><i className="signal warm" /> volumen alto</span><span><i className="signal cool" /> límites nacionales</span><span><i className="signal dim" /> clic para acercar</span></div>
-        {selectedPoint && <div className="place-card"><button onClick={() => setSelectedPoint(null)} aria-label="Cerrar detalle">×</button><span>{data?.pointBasis === "sourceCountries" ? "ORIGEN EDITORIAL" : "LUGAR MENCIONADO"}</span><h2>{selectedPoint.name}</h2><p>{selectedPoint.count} artículos en la cobertura consultada. Este punto indica {data?.pointBasis === "sourceCountries" ? "el país del medio, no necesariamente el lugar del hecho" : "un país identificado explícitamente en el titular"}.</p></div>}
-        <div className="timeline-dock"><div className="timeline-copy"><Clock3 /><span>VIAJE TEMPORAL</span><strong>{timeWindows[timeIndex][1]}</strong></div><Slider min={0} max={timeWindows.length - 1} step={1} value={[timeIndex]} onValueChange={(value) => setTimeIndex(value[0])} aria-label="Ventana temporal" /><div className="timeline-labels"><span>1 h</span><span>ahora</span><span>7 días</span></div></div>
-      </section>
+    <section className="workspace">
+      <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos situados solo cuando el lugar aparece explícitamente en la fuente."}</p></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
+      <div className="filter-bar">
+        <label><span>País</span><select value={country} onChange={(event) => selectCountry(event.target.value)}><option value="">Todo el mundo</option>{countries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
+        <label><span>Ventana</span><select value={timespan} onChange={(event) => setTimespan(event.target.value as PulseTimespan)}>{WINDOWS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+        <form className="place-search" onSubmit={searchPlace}><label htmlFor="place-query">Región, ciudad o pueblo</label><div><MapPin /><input id="place-query" value={placeDraft} onChange={(event) => setPlaceDraft(event.target.value)} placeholder={country ? `Buscar dentro de ${countryName}` : "Ej. Písac, Cusco"} /><button disabled={placeLoading}>{placeLoading ? <Loader2 className="spin" /> : "Ir"}</button></div></form>
+        <div className="view-switch" aria-label="Vista del mapa"><button className={!flatMap ? "active" : ""} onClick={() => setFlatMap(false)}>3D</button><button className={flatMap ? "active" : ""} onClick={() => setFlatMap(true)}>2D</button></div>
+      </div>
+      {(placeResults.length > 0 || placeMessage) && <div className="place-results" aria-live="polite">{placeResults.map((place) => <button key={place.id} onClick={() => choosePlace(place)}><MapPin /><span><strong>{place.name}</strong><small>{place.displayName} · {place.type === "region" ? "región" : place.type === "city" ? "ciudad" : "localidad"}</small></span><ArrowRight /></button>)}{placeMessage && <p>{placeMessage} <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">Geografía: GeoNames/Open-Meteo</a></p>}</div>}
 
-      <aside className="signal-panel">
-        <div className="panel-heading"><div><span>ÚLTIMAS SEÑALES</span><h2>Ahora en el mundo</h2></div><Activity aria-hidden="true" /></div>
-        <div className="feed-list" aria-live="polite">
-          {loading && Array.from({ length: 5 }).map((_, index) => <div className="story-skeleton" key={index} />)}
-          {!loading && articles.slice(0, 12).map((article, index) => <a className="story-card" href={article.url} target="_blank" rel="noreferrer" key={`${article.url}-${index}`}><div className="story-meta"><span>{article.sourceCountry || article.language || "GLOBAL"}</span><time><Clock3 /> {relativeTime(article.seenDate)}</time></div><h3>{article.title}</h3><div className="story-source"><span>{article.domain}</span><ChevronRight /></div></a>)}
-          {!loading && articles.length === 0 && <div className="empty-feed"><Radio /><strong>Sin señales para este filtro</strong><span>Prueba otra categoría o limpia la búsqueda.</span></div>}
-        </div>
-        <footer className="source-note"><span>Datos: {data?.dataProvider ?? "conectando…"}</span><span>{data?.partial ? "cobertura parcial" : "actualización continua"}</span></footer>
-      </aside>
-    </main>
-  );
+      <div className="content-grid">
+        <section className="map-panel" aria-label="Mapa mundial de noticias">
+          <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button></div></div>
+          <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={flatMap} resetKey={resetKey} />}<div className="map-legend"><span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
+          <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>por mención</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
+        </section>
+
+        <aside className="news-panel" aria-label="Noticias de la consulta">
+          <div className="news-heading"><div><span className="eyebrow">COBERTURA</span><h2>{mode === "early" ? "Señales verificables" : "Últimos titulares"}</h2></div><span className="result-count">{visibleArticles.length}</span></div>
+          <div className="feed-tabs" role="tablist"><button role="tab" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button><button role="tab" aria-selected={feedMode === "positive"} className={feedMode === "positive" ? "active" : ""} onClick={() => setFeedMode("positive")}>Impulso</button><button role="tab" aria-selected={feedMode === "negative"} className={feedMode === "negative" ? "active" : ""} onClick={() => setFeedMode("negative")}>Presión</button></div>
+          <div className="feed" aria-busy={loading}>{loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}{!loading && visibleArticles.length === 0 && <div className="empty-state"><Database /><strong>Sin resultados para esta combinación</strong><p>Amplía la ventana, cambia el tema o borra el lugar. No rellenamos huecos con datos inventados.</p></div>}{visibleArticles.map((article) => <article className="story" key={article.id}><button className="story-open" onClick={() => setSelectedArticle(article)}><div className="story-meta"><span>{kindLabel(article)}</span><time dateTime={article.publishedAt || article.seenDate}><Clock3 />{relativeTime(article.publishedAt || article.seenDate)}</time></div><h3>{article.title}</h3><div className="story-bottom"><span>{sourceLabel(article)}</span><span>{article.mentionedCountries.slice(0, 2).map((item) => item.name).join(" · ") || "sin lugar explícito"}</span><ChevronRight /></div></button><button className="save-story" onClick={() => toggleSaved(article)} aria-label={saved.includes(article.id) ? "Quitar de guardadas" : "Guardar noticia"}>{saved.includes(article.id) ? <BookmarkCheck /> : <Bookmark />}</button></article>)}</div>
+          <div className="coverage-note"><Info /><span>{data?.coverageNote || "La cobertura depende de fuentes públicas disponibles."}</span></div>
+        </aside>
+      </div>
+    </section>
+
+    <Sheet open={!!selectedArticle} onOpenChange={(open) => !open && setSelectedArticle(null)}><SheetContent className="story-sheet">{selectedArticle && <><SheetHeader className="story-sheet-head"><div className="detail-badges"><span>{kindLabel(selectedArticle)}</span><span>{selectedArticle.reviewStatus === "not-peer-reviewed" ? "Sin revisión por pares" : selectedArticle.reviewStatus === "preliminary" ? "Preliminar" : selectedArticle.reviewStatus === "reviewed" ? "Revisado" : "Estado no indicado"}</span></div><SheetTitle>{selectedArticle.title}</SheetTitle><SheetDescription>{sourceLabel(selectedArticle)} · {relativeTime(selectedArticle.publishedAt || selectedArticle.seenDate)}</SheetDescription></SheetHeader><div className="story-detail"><div className="source-card"><Database /><div><span>Origen y hora</span><strong>{selectedArticle.provider}</strong><small>{selectedArticle.timestampBasis === "published" ? "Publicación" : selectedArticle.timestampBasis === "event" ? "Evento" : "Observación"}: {new Date(selectedArticle.seenDate).toLocaleString("es-PE")}</small></div></div><section><h3>Ubicación sustentada</h3>{selectedArticle.location && <p><MapPin />{selectedArticle.location.label}: coordenadas publicadas por la fuente.</p>}{selectedArticle.mentionedCountries.length ? <ul>{selectedArticle.mentionedCountries.map((item) => <li key={item.code}><strong>{item.name}</strong><span>Evidencia en el titular: “{item.evidence}”</span></li>)}</ul> : <p>El titular no identifica un país de forma inequívoca; no se coloca en el mapa.</p>}</section><section><h3>Lectura de tono</h3><p>{selectedArticle.positiveTerms.length || selectedArticle.negativeTerms.length ? `Coincidencias: ${[...selectedArticle.positiveTerms, ...selectedArticle.negativeTerms].join(", ")}.` : "No se detectaron términos del vocabulario exploratorio."} Esto describe palabras, no veracidad, intención ni sentimiento humano.</p></section><div className="detail-actions"><button onClick={() => toggleSaved(selectedArticle)}>{saved.includes(selectedArticle.id) ? <BookmarkCheck /> : <Bookmark />}{saved.includes(selectedArticle.id) ? "Guardada" : "Guardar"}</button><a href={selectedArticle.url} target="_self" rel="noopener noreferrer">Abrir fuente original <ExternalLink /></a></div></div></>}</SheetContent></Sheet>
+
+    <Dialog open={!!selectedConnection} onOpenChange={(open) => !open && setSelectedConnection(null)}><DialogContent className="evidence-dialog"><DialogHeader><DialogTitle>Conexión documentada</DialogTitle><DialogDescription>{selectedConnection?.label}. La línea existe porque los países aparecen en el mismo titular; no implica causalidad.</DialogDescription></DialogHeader><div className="evidence-list">{connectionArticles.map((article) => <button key={article.id} onClick={() => { setSelectedConnection(null); setSelectedArticle(article); }}><Link2 /><span>{article.title}<small>{sourceLabel(article)}</small></span><ChevronRight /></button>)}</div></DialogContent></Dialog>
+    <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Indicadores para formular hipótesis</DialogTitle><DialogDescription>Resumen de la muestra actual. No predice decisiones individuales, mercados, conflictos ni descubrimientos.</DialogDescription></DialogHeader><div className="scenario-grid">{scenarios.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> una predicción real requiere series históricas, variables externas, evaluación contra datos futuros y márgenes de error. Este prototipo aún no cumple esas condiciones.</p></div></DialogContent></Dialog>
+    <Dialog open={methodOpen} onOpenChange={setMethodOpen}><DialogContent className="method-dialog"><DialogHeader><span className="modal-kicker"><CheckCircle2 /> METODOLOGÍA</span><DialogTitle>Qué muestra Pulso Global</DialogTitle><DialogDescription>Un visor de cobertura pública con límites visibles.</DialogDescription></DialogHeader><div className="method-steps"><div><b>01</b><p><strong>Recoge</strong> titulares, documentos oficiales y señales públicas con hora verificable.</p></div><div><b>02</b><p><strong>Ubica</strong> países nombrados explícitamente o coordenadas entregadas por la fuente.</p></div><div><b>03</b><p><strong>Relaciona</strong> países co-mencionados en el mismo titular y conserva evidencia.</p></div><div><b>04</b><p><strong>Expone límites</strong>: una ausencia significa “sin dato en esta muestra”, no “no ocurrió”.</p></div></div></DialogContent></Dialog>
+  </main>;
 }
