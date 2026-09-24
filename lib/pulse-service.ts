@@ -101,26 +101,32 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const urls = newsUrls(request);
   const sources: PulseSource[] = [];
   const errors: string[] = [];
-  let articles: PulseArticle[] = [];
-  try {
-    const data: unknown = JSON.parse(await boundedFetchText(urls.gdelt, "json", fetcher));
-    if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
-    articles = filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
-    sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: articles.length ? "ok" : "empty", count: articles.length, note: "Fecha de detección por GDELT; no acredita cuándo publicó el medio." });
-  } catch (error) {
-    const note = errorMessage(error); errors.push(`GDELT: ${note}`);
+  const [gdelt, rss] = await Promise.allSettled([
+    boundedFetchText(urls.gdelt, "json", fetcher).then((text) => {
+      const data: unknown = JSON.parse(text);
+      if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
+      return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
+    }),
+    boundedFetchText(urls.rss, "xml", fetcher).then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: "Google News RSS", timestampBasis: "published" }), request.timespan, now)),
+  ]);
+  const gathered: PulseArticle[] = [];
+  if (gdelt.status === "fulfilled") {
+    gathered.push(...gdelt.value);
+    sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: gdelt.value.length ? "ok" : "empty", count: gdelt.value.length, note: "Índice global. La hora indica detección por GDELT, no acredita cuándo publicó el medio." });
+  } else {
+    const note = errorMessage(gdelt.reason); errors.push(`GDELT: ${note}`);
     sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: "error", count: 0, note });
   }
-  if (!articles.length) {
-    try {
-      const raw = parseRssItems(await boundedFetchText(urls.rss, "xml", fetcher));
-      articles = filterTimeAndDedupe(normalizeMany(raw, { provider: "Google News RSS", timestampBasis: "published" }), request.timespan, now);
-      sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: articles.length ? "ok" : "empty", count: articles.length, note: "Respaldo en español. Fecha comunicada por el feed; enlaces vía Google News." });
-    } catch (error) {
-      const note = errorMessage(error); errors.push(`Google News: ${note}`);
-      sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: "error", count: 0, note });
-    }
+  if (rss.status === "fulfilled") {
+    gathered.push(...rss.value);
+    sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: rss.value.length ? "ok" : "empty", count: rss.value.length, note: "Índice complementario en español. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
+  } else {
+    const note = errorMessage(rss.reason); errors.push(`Google News: ${note}`);
+    sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: "error", count: 0, note });
   }
+  // Merge both public indexes instead of treating one as a fallback. This
+  // improves source diversity while retaining the same bounded 120-item view.
+  const articles = filterTimeAndDedupe(gathered, request.timespan, now);
   return { articles, sources, errors, fetchedAt: new Date(now).toISOString() };
 }
 
@@ -177,6 +183,6 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
     coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, publicaciones NASA e investigación en IA. Disponibles en Panorama, Ciencia y Tecnología. No garantizan primicia ni predicen acontecimientos; revisión científica de preprints no verificada."
-      : `Muestra de hasta 120 titulares en español. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
+      : `Muestra combinada de hasta 120 titulares en español. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
   };
 }

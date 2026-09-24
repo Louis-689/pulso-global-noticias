@@ -18,7 +18,10 @@ const cityAliases: Record<string, string[]> = {
   AR: ["Buenos Aires"], CL: ["Santiago de Chile"], BR: ["São Paulo", "Sao Paulo"],
   MX: ["Mexico City", "Ciudad de México"], GB: ["London", "Londres"], FR: ["Paris", "París"],
 };
-const ambiguousNames = new Set(["congo", "georgia", "jordan", "chad"]);
+// Bare names that are also common words, regions or cities create misleading
+// pins (for example "reunión" as a meeting, or Guayana inside Ciudad Guayana).
+// Longer official names remain eligible evidence.
+const ambiguousNames = new Set(["congo", "georgia", "jordan", "chad", "reunion", "guayana", "guiana"]);
 const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const countryByCode = new Map(countries.map((country) => [country.cca2, country]));
