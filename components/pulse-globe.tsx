@@ -18,6 +18,7 @@ export type PulseGlobeProps = {
   showConnections: boolean;
   flat: boolean;
   resetKey: number;
+  live: boolean;
 };
 
 type MapPoint = { lat: number; lng: number; count: number; name: string; country?: PulsePoint; article?: PulseArticle };
@@ -34,7 +35,7 @@ class GlobeBoundary extends Component<{ children: ReactNode; onFailure: () => vo
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-export default function PulseGlobe({ points, connections, articles, selectedCountry, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, flat, resetKey }: PulseGlobeProps) {
+export default function PulseGlobe({ points, connections, articles, selectedCountry, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, flat, resetKey, live }: PulseGlobeProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 640, height: 480 });
@@ -44,7 +45,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
   const [reducedMotion, setReducedMotion] = useState(false);
   const [flatZoomState, setFlatZoomState] = useState({ key: resetKey, value: 1 });
   const flatZoom = flatZoomState.key === resetKey ? flatZoomState.value : 1;
-  const material = useMemo(() => new MeshPhongMaterial({ color: "#0b2840", emissive: "#031421", specular: "#1b475c", shininess: 14 }), []);
+  const material = useMemo(() => new MeshPhongMaterial({ color: "#164c50", emissive: "#071d20", specular: "#8bc5bf", shininess: 20 }), []);
   const useFlat = flat || webglFailed;
   const counts = useMemo(() => new Map(points.map((point) => [point.id, point.count])), [points]);
   const mapPoints = useMemo<MapPoint[]>(() => [
@@ -78,7 +79,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
 
   useEffect(() => {
     if (!ready || useFlat) return;
-    globeRef.current?.pointOfView(country ? { lat: country.lat, lng: country.lng, altitude: 1.45 } : { lat: 18, lng: -38, altitude: 2.05 }, reducedMotion ? 0 : 800);
+    globeRef.current?.pointOfView(country ? { lat: country.lat, lng: country.lng, altitude: 1.2 } : { lat: 18, lng: -38, altitude: 1.55 }, reducedMotion ? 0 : 800);
   }, [country, ready, useFlat, reducedMotion, resetKey]);
 
   useEffect(() => {
@@ -89,17 +90,26 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
     return () => canvas?.removeEventListener("webglcontextlost", lost);
   }, [ready, useFlat]);
 
+  useEffect(() => {
+    if (!ready || useFlat) return;
+    const controls = globeRef.current?.controls();
+    if (!controls) return;
+    controls.autoRotate = live && !reducedMotion && !selectedCountry;
+    controls.autoRotateSpeed = 0.28;
+  }, [live, ready, reducedMotion, selectedCountry, useFlat]);
+
   const onReady = useCallback(() => {
     const globe = globeRef.current;
     if (!globe) return;
     const controls = globe.controls();
-    controls.autoRotate = false;
+    controls.autoRotate = live && !reducedMotion && !selectedCountry;
+    controls.autoRotateSpeed = 0.28;
     controls.enablePan = false;
     controls.minDistance = 125;
     controls.maxDistance = 480;
     globe.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
     setReady(true);
-  }, []);
+  }, [live, reducedMotion, selectedCountry]);
 
   const selectPoint = (point: MapPoint) => point.article ? onSelectArticle(point.article) : point.country && onSelectCountry(point.country.id);
   const zoom = (direction: number) => {
@@ -111,11 +121,11 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
   };
   const reset = () => {
     setFlatZoomState({ key: resetKey, value: 1 });
-    globeRef.current?.pointOfView({ lat: 18, lng: -38, altitude: 2.05 }, reducedMotion ? 0 : 650);
+    globeRef.current?.pointOfView({ lat: 18, lng: -38, altitude: 1.55 }, reducedMotion ? 0 : 650);
   };
-  const landColor = (item: WorldFeature) => item.properties.code === selectedCountry ? "#52c5b1" : item.properties.code === hovered ? "#438493" : counts.has(item.properties.code) ? "#2b6577" : "#243f52";
+  const landColor = (item: WorldFeature) => item.properties.code === selectedCountry ? "#df7650" : item.properties.code === hovered ? "#65aaa1" : counts.has(item.properties.code) ? "#2d7776" : "#375957";
 
-  return <div ref={hostRef} className="globe-host" style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "radial-gradient(ellipse at 50% 38%, #132e43 0%, #0a1b2c 64%, #071522 100%)" }}>
+  return <div ref={hostRef} className="globe-host" style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", background: "linear-gradient(180deg, rgba(8,35,39,.32), rgba(7,25,28,.88)), url('/pulso-renaissance-atlas.png') center / cover" }}>
     {useFlat ? <svg viewBox={`${Math.max(0, Math.min(1000 - 1000 / flatZoom, focus.x - 500 / flatZoom))} ${Math.max(0, Math.min(500 - 500 / flatZoom, focus.y - 250 / flatZoom))} ${1000 / flatZoom} ${500 / flatZoom}`} width="100%" height="100%" aria-label="Mapa mundial: selecciona un país para consultar su cobertura. También puedes usar el buscador de países." role="group" style={{ display: "block" }}>
       {[-60, -30, 0, 30, 60].map((latitude) => <path key={latitude} d={`M0,${projected(latitude, 0).y}H1000`} stroke="#b3cadc" opacity="0.08" fill="none" />)}
       {[-120, -60, 0, 60, 120].map((longitude) => <path key={longitude} d={`M${projected(0, longitude).x},0V500`} stroke="#b3cadc" opacity="0.08" fill="none" />)}
@@ -129,18 +139,18 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
       {mapPoints.map((point) => {
         const position = projected(point.lat, point.lng);
         return <g key={point.article?.id || point.country!.id} role="button" tabIndex={0} aria-label={point.article ? `Ver evento: ${point.article.title}` : `Ver ${point.name}: ${point.count} titulares`} onClick={() => selectPoint(point)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectPoint(point); } }} style={{ cursor: "pointer" }}>
-          <circle cx={position.x} cy={position.y} r={Math.max(4, Math.min(9, 3 + Math.sqrt(point.count))) / Math.sqrt(flatZoom)} fill={point.article ? "#ffb96c" : "#7de8d2"} stroke="#0a2030" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+          <circle cx={position.x} cy={position.y} r={Math.max(4, Math.min(9, 3 + Math.sqrt(point.count))) / Math.sqrt(flatZoom)} fill={point.article ? "#ee8b5b" : "#9edbd0"} stroke="#173734" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
           <title>{point.article?.title || `${point.name}: ${point.count} titulares · ubicación aproximada del país`}</title>
         </g>;
       })}
     </svg> : <GlobeBoundary onFailure={() => setWebglFailed(true)}>
-      <Globe ref={globeRef} width={dimensions.width} height={dimensions.height} backgroundColor="rgba(0,0,0,0)" globeMaterial={material} showAtmosphere atmosphereColor="#5f9ab6" atmosphereAltitude={0.13} showGraticules={false} onGlobeReady={onReady}
-        polygonsData={worldFeatures} polygonAltitude={(item) => (item as WorldFeature).properties.code === selectedCountry ? 0.009 : 0.003} polygonCapColor={(item) => landColor(item as WorldFeature)} polygonSideColor={() => "#173145"} polygonStrokeColor={() => "#7391a5"} polygonsTransitionDuration={reducedMotion ? 0 : 180}
-        polygonLabel={(item) => { const value = item as WorldFeature; return `<div style="padding:8px 10px;color:#f3f9fc;background:#102c3e;border-radius:8px;font:13px/1.5 system-ui"><strong>${escapeHtml(value.properties.spanishName)}</strong><br/>${counts.get(value.properties.code) || 0} titulares en esta muestra<br/><span style="color:#aac5d2">Clic para explorar el país</span></div>`; }}
+      <Globe ref={globeRef} width={dimensions.width} height={dimensions.height} backgroundColor="rgba(0,0,0,0)" globeMaterial={material} showAtmosphere atmosphereColor="#9edbd0" atmosphereAltitude={0.13} showGraticules={false} onGlobeReady={onReady}
+        polygonsData={worldFeatures} polygonAltitude={(item) => (item as WorldFeature).properties.code === selectedCountry ? 0.009 : 0.003} polygonCapColor={(item) => landColor(item as WorldFeature)} polygonSideColor={() => "#254846"} polygonStrokeColor={() => "#d8c69d"} polygonsTransitionDuration={reducedMotion ? 0 : 180}
+        polygonLabel={(item) => { const value = item as WorldFeature; return `<div style="padding:9px 11px;color:#f7efd9;background:#173734;border:1px solid #b5965f;border-radius:4px;font:13px/1.5 Georgia,serif"><strong>${escapeHtml(value.properties.spanishName)}</strong><br/>${counts.get(value.properties.code) || 0} titulares en esta muestra<br/><span style="color:#bcd8d1">Clic para explorar el país</span></div>`; }}
         onPolygonHover={(item) => setHovered(item ? (item as WorldFeature).properties.code : "")} onPolygonClick={(item) => { const code = (item as WorldFeature).properties.code; if (code) onSelectCountry(code); }}
-        pointsData={mapPoints} pointLat="lat" pointLng="lng" pointAltitude={0.018} pointColor={(item) => (item as MapPoint).article ? "#ffb96c" : "#82efd8"} pointRadius={(item) => Math.max(0.26, Math.min(0.8, 0.2 + Math.sqrt((item as MapPoint).count) * 0.11))} pointResolution={12} pointsTransitionDuration={reducedMotion ? 0 : 450}
-        pointLabel={(item) => { const value = item as MapPoint; return `<div style="max-width:260px;padding:8px 10px;color:#f3f9fc;background:#102c3e;border-radius:8px;font:13px/1.5 system-ui">${escapeHtml(value.article?.title || `${value.name}: ${value.count} titulares`)}<br/><span style="color:#aac5d2">${value.article ? "Ubicación publicada por la fuente · clic para abrir" : "Centro aproximado del país · clic para explorar"}</span></div>`; }} onPointClick={(item) => selectPoint(item as MapPoint)}
-        arcsData={showConnections ? connections : []} arcStartLat="startLat" arcStartLng="startLng" arcEndLat="endLat" arcEndLng="endLng" arcColor={() => ["#7de8d2bb", "#eab777bb"]} arcStroke={0.45} arcAltitudeAutoScale={0.35} arcDashLength={1} arcDashGap={0} arcsTransitionDuration={reducedMotion ? 0 : 400} arcLabel={(item) => escapeHtml(`${(item as PulseConnection).label} · Clic para ver los titulares compartidos`)} onArcClick={(item) => onSelectConnection(item as PulseConnection)}
+        pointsData={mapPoints} pointLat="lat" pointLng="lng" pointAltitude={0.018} pointColor={(item) => (item as MapPoint).article ? "#ee8b5b" : "#a8e0d5"} pointRadius={(item) => Math.max(0.26, Math.min(0.8, 0.2 + Math.sqrt((item as MapPoint).count) * 0.11))} pointResolution={12} pointsTransitionDuration={reducedMotion ? 0 : 450}
+        pointLabel={(item) => { const value = item as MapPoint; return `<div style="max-width:260px;padding:9px 11px;color:#f7efd9;background:#173734;border:1px solid #b5965f;border-radius:4px;font:13px/1.5 Georgia,serif">${escapeHtml(value.article?.title || `${value.name}: ${value.count} titulares`)}<br/><span style="color:#bcd8d1">${value.article ? "Ubicación publicada por la fuente · clic para abrir" : "Centro aproximado del país · clic para explorar"}</span></div>`; }} onPointClick={(item) => selectPoint(item as MapPoint)}
+        arcsData={showConnections ? connections : []} arcStartLat="startLat" arcStartLng="startLng" arcEndLat="endLat" arcEndLng="endLng" arcColor={() => ["#a8e0d5cc", "#df8a55cc"]} arcStroke={0.45} arcAltitudeAutoScale={0.35} arcDashLength={0.34} arcDashGap={0.12} arcDashAnimateTime={live && !reducedMotion ? 1800 : 0} arcsTransitionDuration={reducedMotion ? 0 : 400} arcLabel={(item) => escapeHtml(`${(item as PulseConnection).label} · Clic para ver los titulares compartidos`)} onArcClick={(item) => onSelectConnection(item as PulseConnection)}
       />
     </GlobeBoundary>}
     {webglFailed && <p role="status" style={{ position: "absolute", top: 12, left: 16, right: 16, margin: 0, color: "#d2e2eb", fontSize: 12 }}>Vista 2D activada: tu dispositivo no pudo iniciar el globo 3D. La cobertura sigue disponible.</p>}

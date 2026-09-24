@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, CheckCircle2, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Globe2, Info, Link2, Loader2, MapPin, Network, Newspaper, Pause, RefreshCw, Search, Sparkles, Volume2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, BrainCircuit, CheckCircle2, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Globe2, Info, Landmark, Link2, Loader2, MapPin, Network, Newspaper, Pause, Radio, RefreshCw, Search, SlidersHorizontal, Sparkles, TrendingUp, Volume2, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { countries } from "@/lib/pulse-geography";
@@ -18,7 +18,10 @@ const CATEGORIES: Array<[PulseCategory, string]> = [
   ["sports", "Deportes"], ["education", "Educación"],
 ];
 const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "Última hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
-type FeedMode = "latest" | "positive" | "negative" | "saved";
+type FeedMode = "latest" | "signals" | "positive" | "negative" | "saved";
+type SortMode = "newest" | "coverage" | "signal";
+type ScenarioLens = "human" | "economy" | "science";
+type ScenarioHorizon = "24h" | "7d" | "30d";
 type WebMcpContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
 
 function MapLoading({ label }: { label: string }) { return <div className="map-loading"><Loader2 className="spin" aria-hidden="true" /><span>{label}</span></div>; }
@@ -56,11 +59,15 @@ export function GlobalPulse() {
   const [selectedArticle, setSelectedArticle] = useState<PulseArticle | null>(null);
   const [selectedConnection, setSelectedConnection] = useState<PulseConnection | null>(null);
   const [feedMode, setFeedMode] = useState<FeedMode>("latest");
+  const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [saved, setSaved] = useState<string[]>([]);
+  const [liveMode, setLiveMode] = useState(true);
   const [showConnections, setShowConnections] = useState(false);
   const [flatMap, setFlatMap] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [scenarioOpen, setScenarioOpen] = useState(false);
+  const [scenarioLens, setScenarioLens] = useState<ScenarioLens>("human");
+  const [scenarioHorizon, setScenarioHorizon] = useState<ScenarioHorizon>("24h");
   const [methodOpen, setMethodOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -91,7 +98,11 @@ export function GlobalPulse() {
     queueMicrotask(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal); });
     return () => controller.abort();
   }, [fetchPulse]);
-  useEffect(() => { const timer = window.setInterval(() => { if (document.visibilityState === "visible") void fetchPulse(); }, 15 * 60 * 1000); return () => window.clearInterval(timer); }, [fetchPulse]);
+  useEffect(() => {
+    if (!liveMode) return;
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void fetchPulse(); }, 3 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [fetchPulse, liveMode]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try { setSaved(JSON.parse(localStorage.getItem("pulso-global-saved") || "[]")); } catch { setSaved([]); }
@@ -130,16 +141,46 @@ export function GlobalPulse() {
   }, []);
 
   const articles = useMemo(() => data?.articles ?? [], [data?.articles]);
-  const visibleArticles = useMemo(() => feedMode === "positive" ? data?.rankings.positive ?? [] : feedMode === "negative" ? data?.rankings.negative ?? [] : feedMode === "saved" ? articles.filter((item) => saved.includes(item.id)) : articles, [feedMode, data?.rankings, articles, saved]);
+  const visibleArticles = useMemo(() => {
+    const selected = feedMode === "positive" ? data?.rankings.positive ?? []
+      : feedMode === "negative" ? data?.rankings.negative ?? []
+      : feedMode === "signals" ? articles.filter((item) => item.kind !== "news" || item.positiveTerms.length + item.negativeTerms.length > 0)
+      : feedMode === "saved" ? articles.filter((item) => saved.includes(item.id))
+      : articles;
+    return [...selected].sort((a, b) => {
+      if (sortMode === "coverage") return b.mentionedCountries.length - a.mentionedCountries.length || Date.parse(b.publishedAt || b.seenDate) - Date.parse(a.publishedAt || a.seenDate);
+      if (sortMode === "signal") return (b.positiveTerms.length + b.negativeTerms.length + (b.kind === "official" || b.kind === "preprint" || b.kind === "earthquake" ? 3 : 0)) - (a.positiveTerms.length + a.negativeTerms.length + (a.kind === "official" || a.kind === "preprint" || a.kind === "earthquake" ? 3 : 0));
+      return Date.parse(b.publishedAt || b.seenDate) - Date.parse(a.publishedAt || a.seenDate);
+    });
+  }, [feedMode, sortMode, data?.rankings, articles, saved]);
   const connectionArticles = useMemo(() => selectedConnection ? articles.filter((item) => selectedConnection.articleIds.includes(item.id)) : [], [selectedConnection, articles]);
-  const scenarios = useMemo(() => {
+  const scenarioModel = useMemo(() => {
     const stats = data?.stats; const scored = stats?.scored || 0; const total = stats?.total || 0;
-    return [
-      { icon: Activity, title: "Presión informativa", value: scored ? `${Math.round(((stats?.negative || 0) / scored) * 100)}%` : "Sin base", text: "Titulares clasificables con vocabulario adverso. No mide emociones de una población." },
-      { icon: Globe2, title: "Alcance geográfico", value: total ? `${Math.round(((stats?.located || 0) / total) * 100)}%` : "Sin base", text: "Parte de la muestra con países mencionados de forma explícita." },
-      { icon: FlaskConical, title: "Señales científicas", value: String(articles.filter((item) => item.kind === "preprint" || item.kind === "official").length), text: "Fuentes oficiales y prepublicaciones presentes en la consulta." },
-    ];
-  }, [data?.stats, articles]);
+    const located = total ? Math.round(((stats?.located || 0) / total) * 100) : 0;
+    const pressure = scored ? Math.round(((stats?.negative || 0) / scored) * 100) : 0;
+    const impulse = scored ? Math.round(((stats?.positive || 0) / scored) * 100) : 0;
+    const scientific = articles.filter((item) => item.kind === "preprint" || item.kind === "official").length;
+    const crossBorder = data?.connections.length || 0;
+    const evidence = total >= 60 ? "media" : total >= 20 ? "limitada" : "insuficiente";
+    const lenses = {
+      human: [
+        { icon: BrainCircuit, title: "Presión narrativa", value: scored ? `${pressure}%` : "Sin base", text: "Vocabulario adverso dentro de titulares clasificables; no representa emociones individuales." },
+        { icon: Globe2, title: "Dispersión territorial", value: total ? `${located}%` : "Sin base", text: "Porción situada mediante países explícitamente mencionados." },
+        { icon: Network, title: "Cruces de atención", value: String(crossBorder), text: "Pares de países co-mencionados; sugiere focos compartidos, no causalidad." },
+      ],
+      economy: [
+        { icon: TrendingUp, title: "Impulso lexical", value: scored ? `${impulse}%` : "Sin base", text: "Proporción de lenguaje asociado a avance dentro de la muestra clasificable." },
+        { icon: Activity, title: "Presión lexical", value: scored ? `${pressure}%` : "Sin base", text: "Proporción de lenguaje adverso. No equivale a tendencia de mercado." },
+        { icon: Landmark, title: "Interdependencias", value: String(crossBorder), text: "Conexiones editoriales internacionales observadas en los titulares." },
+      ],
+      science: [
+        { icon: FlaskConical, title: "Señales científicas", value: String(scientific), text: "Fuentes oficiales y prepublicaciones presentes en la consulta." },
+        { icon: Database, title: "Base observable", value: String(total), text: "Registros públicos disponibles para formular, no confirmar, hipótesis." },
+        { icon: Globe2, title: "Cobertura ubicable", value: total ? `${located}%` : "Sin base", text: "Documentos con referencia geográfica explícita o coordenada publicada." },
+      ],
+    } satisfies Record<ScenarioLens, Array<{ icon: typeof Activity; title: string; value: string; text: string }>>;
+    return { cards: lenses[scenarioLens], evidence, total };
+  }, [data?.stats, data?.connections, articles, scenarioLens]);
 
   function submitSearch(event: FormEvent) { event.preventDefault(); setQuery(searchDraft.trim().slice(0, 100)); }
   async function searchPlace(event: FormEvent) {
@@ -168,7 +209,7 @@ export function GlobalPulse() {
     <header className="app-header">
       <button className="brand" onClick={clearLocation} aria-label="Volver al panorama mundial"><span className="brand-orbit"><Globe2 /></span><span><strong>PULSO</strong> GLOBAL<small>observatorio geográfico</small></span></button>
       <form className="global-search" onSubmit={submitSearch} role="search"><Search /><input ref={searchRef} value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Buscar tema, país o titular" aria-label="Buscar noticias" />{searchDraft && <button type="button" className="clear-search" onClick={() => { setSearchDraft(""); setQuery(""); }} aria-label="Limpiar búsqueda"><X /></button>}<kbd>Ctrl K</kbd></form>
-      <div className="header-actions"><button className="header-button" onClick={toggleBriefing} disabled={!visibleArticles.length}>{speaking ? <Pause /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="refresh-button" onClick={() => void fetchPulse()} disabled={loading} aria-label="Actualizar fuentes"><RefreshCw className={loading ? "spin" : ""} /></button></div>
+      <div className="header-actions"><button className={liveMode ? "pulse-control active" : "pulse-control"} onClick={() => setLiveMode((value) => !value)} aria-pressed={liveMode}><span className="pulse-core"><Radio /></span><span><strong>{liveMode ? "EN VIVO" : "PAUSADO"}</strong><small>{liveMode ? "pulso cada 3 min" : "actualización manual"}</small></span></button><button className="header-button" onClick={toggleBriefing} disabled={!visibleArticles.length}>{speaking ? <Pause /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="refresh-button" onClick={() => void fetchPulse()} disabled={loading} aria-label="Actualizar fuentes"><RefreshCw className={loading ? "spin" : ""} /></button></div>
     </header>
 
     <aside className="side-rail" aria-label="Navegación principal">
@@ -195,13 +236,13 @@ export function GlobalPulse() {
       <div className="content-grid">
         <section className="map-panel" aria-label="Mapa mundial de noticias">
           <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button></div></div>
-          <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={flatMap} resetKey={resetKey} />}<div className="map-legend"><span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
+          <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={flatMap} resetKey={resetKey} live={liveMode} />}<div className="map-legend"><span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
           <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>por mención</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
         </section>
 
         <aside className="news-panel" aria-label="Noticias de la consulta">
-          <div className="news-heading"><div><span className="eyebrow">COBERTURA</span><h2>{mode === "early" ? "Señales verificables" : "Últimos titulares"}</h2></div><span className="result-count">{visibleArticles.length}</span></div>
-          <div className="feed-tabs" role="tablist"><button role="tab" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button><button role="tab" aria-selected={feedMode === "positive"} className={feedMode === "positive" ? "active" : ""} onClick={() => setFeedMode("positive")}>Impulso</button><button role="tab" aria-selected={feedMode === "negative"} className={feedMode === "negative" ? "active" : ""} onClick={() => setFeedMode("negative")}>Presión</button></div>
+          <div className="news-heading"><div><span className="eyebrow">COBERTURA</span><h2>{mode === "early" ? "Señales verificables" : "Últimos titulares"}</h2></div><div className="news-tools"><label className="sort-control"><SlidersHorizontal /><span className="sr-only">Ordenar noticias</span><select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} aria-label="Ordenar noticias"><option value="newest">Más recientes</option><option value="coverage">Mayor alcance</option><option value="signal">Señal destacada</option></select></label><span className="result-count">{visibleArticles.length}</span></div></div>
+          <div className="feed-tabs" role="tablist"><button role="tab" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button><button role="tab" aria-selected={feedMode === "signals"} className={feedMode === "signals" ? "active" : ""} onClick={() => setFeedMode("signals")}>Señales</button><button role="tab" aria-selected={feedMode === "positive"} className={feedMode === "positive" ? "active" : ""} onClick={() => setFeedMode("positive")}>Impulso</button><button role="tab" aria-selected={feedMode === "negative"} className={feedMode === "negative" ? "active" : ""} onClick={() => setFeedMode("negative")}>Presión</button></div>
           <div className="feed" aria-busy={loading}>{loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}{!loading && visibleArticles.length === 0 && <div className="empty-state"><Database /><strong>Sin resultados para esta combinación</strong><p>Amplía la ventana, cambia el tema o borra el lugar. No rellenamos huecos con datos inventados.</p></div>}{visibleArticles.map((article) => <article className="story" key={article.id}><button className="story-open" onClick={() => setSelectedArticle(article)}><div className="story-meta"><span>{kindLabel(article)}</span><time dateTime={article.publishedAt || article.seenDate}><Clock3 />{relativeTime(article.publishedAt || article.seenDate)}</time></div><h3>{article.title}</h3><div className="story-bottom"><span>{sourceLabel(article)}</span><span>{article.mentionedCountries.slice(0, 2).map((item) => item.name).join(" · ") || "sin lugar explícito"}</span><ChevronRight /></div></button><button className="save-story" onClick={() => toggleSaved(article)} aria-label={saved.includes(article.id) ? "Quitar de guardadas" : "Guardar noticia"}>{saved.includes(article.id) ? <BookmarkCheck /> : <Bookmark />}</button></article>)}</div>
           <div className="coverage-note"><Info /><span>{data?.coverageNote || "La cobertura depende de fuentes públicas disponibles."}</span></div>
         </aside>
@@ -211,7 +252,7 @@ export function GlobalPulse() {
     <Sheet open={!!selectedArticle} onOpenChange={(open) => !open && setSelectedArticle(null)}><SheetContent className="story-sheet">{selectedArticle && <><SheetHeader className="story-sheet-head"><div className="detail-badges"><span>{kindLabel(selectedArticle)}</span><span>{selectedArticle.reviewStatus === "not-peer-reviewed" ? "Sin revisión por pares" : selectedArticle.reviewStatus === "preliminary" ? "Preliminar" : selectedArticle.reviewStatus === "reviewed" ? "Revisado" : "Estado no indicado"}</span></div><SheetTitle>{selectedArticle.title}</SheetTitle><SheetDescription>{sourceLabel(selectedArticle)} · {relativeTime(selectedArticle.publishedAt || selectedArticle.seenDate)}</SheetDescription></SheetHeader><div className="story-detail"><div className="source-card"><Database /><div><span>Origen y hora</span><strong>{selectedArticle.provider}</strong><small>{selectedArticle.timestampBasis === "published" ? "Publicación" : selectedArticle.timestampBasis === "event" ? "Evento" : "Observación"}: {new Date(selectedArticle.seenDate).toLocaleString("es-PE")}</small></div></div><section><h3>Ubicación sustentada</h3>{selectedArticle.location && <p><MapPin />{selectedArticle.location.label}: coordenadas publicadas por la fuente.</p>}{selectedArticle.mentionedCountries.length ? <ul>{selectedArticle.mentionedCountries.map((item) => <li key={item.code}><strong>{item.name}</strong><span>Evidencia en el titular: “{item.evidence}”</span></li>)}</ul> : <p>El titular no identifica un país de forma inequívoca; no se coloca en el mapa.</p>}</section><section><h3>Lectura de tono</h3><p>{selectedArticle.positiveTerms.length || selectedArticle.negativeTerms.length ? `Coincidencias: ${[...selectedArticle.positiveTerms, ...selectedArticle.negativeTerms].join(", ")}.` : "No se detectaron términos del vocabulario exploratorio."} Esto describe palabras, no veracidad, intención ni sentimiento humano.</p></section><div className="detail-actions"><button onClick={() => toggleSaved(selectedArticle)}>{saved.includes(selectedArticle.id) ? <BookmarkCheck /> : <Bookmark />}{saved.includes(selectedArticle.id) ? "Guardada" : "Guardar"}</button><a href={selectedArticle.url} target="_self" rel="noopener noreferrer">Abrir fuente original <ExternalLink /></a></div></div></>}</SheetContent></Sheet>
 
     <Dialog open={!!selectedConnection} onOpenChange={(open) => !open && setSelectedConnection(null)}><DialogContent className="evidence-dialog"><DialogHeader><DialogTitle>Conexión documentada</DialogTitle><DialogDescription>{selectedConnection?.label}. La línea existe porque los países aparecen en el mismo titular; no implica causalidad.</DialogDescription></DialogHeader><div className="evidence-list">{connectionArticles.map((article) => <button key={article.id} onClick={() => { setSelectedConnection(null); setSelectedArticle(article); }}><Link2 /><span>{article.title}<small>{sourceLabel(article)}</small></span><ChevronRight /></button>)}</div></DialogContent></Dialog>
-    <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Indicadores para formular hipótesis</DialogTitle><DialogDescription>Resumen de la muestra actual. No predice decisiones individuales, mercados, conflictos ni descubrimientos.</DialogDescription></DialogHeader><div className="scenario-grid">{scenarios.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> una predicción real requiere series históricas, variables externas, evaluación contra datos futuros y márgenes de error. Este prototipo aún no cumple esas condiciones.</p></div></DialogContent></Dialog>
+    <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Horizontes de comportamiento</DialogTitle><DialogDescription>Explora hipótesis humanas, económicas y científicas a partir de la muestra visible. No predice decisiones individuales ni garantiza acontecimientos.</DialogDescription></DialogHeader><div className="scenario-toolbar"><div role="tablist" aria-label="Lente del escenario">{(["human", "economy", "science"] as ScenarioLens[]).map((lens) => <button key={lens} role="tab" aria-selected={scenarioLens === lens} className={scenarioLens === lens ? "active" : ""} onClick={() => setScenarioLens(lens)}>{lens === "human" ? "Humano" : lens === "economy" ? "Económico" : "Científico"}</button>)}</div><label>Horizonte<select value={scenarioHorizon} onChange={(event) => setScenarioHorizon(event.target.value as ScenarioHorizon)}><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div><div className="scenario-status"><span>EVIDENCIA {scenarioModel.evidence.toUpperCase()}</span><strong>{scenarioModel.total} registros · horizonte {scenarioHorizon === "24h" ? "24 horas" : scenarioHorizon === "7d" ? "7 días" : "30 días"}</strong><p>Lectura direccional: si la composición de fuentes se mantiene, estos indicadores describen la continuidad del pulso actual; cuanto mayor sea el horizonte, mayor es la incertidumbre.</p></div><div className="scenario-grid">{scenarioModel.cards.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> una predicción calibrada requiere series históricas, variables externas, evaluación contra datos futuros y márgenes de error. Aquí se muestran escenarios trazables, no profecías.</p></div></DialogContent></Dialog>
     <Dialog open={methodOpen} onOpenChange={setMethodOpen}><DialogContent className="method-dialog"><DialogHeader><span className="modal-kicker"><CheckCircle2 /> METODOLOGÍA</span><DialogTitle>Qué muestra Pulso Global</DialogTitle><DialogDescription>Un visor de cobertura pública con límites visibles.</DialogDescription></DialogHeader><div className="method-steps"><div><b>01</b><p><strong>Recoge</strong> titulares, documentos oficiales y señales públicas con hora verificable.</p></div><div><b>02</b><p><strong>Ubica</strong> países nombrados explícitamente o coordenadas entregadas por la fuente.</p></div><div><b>03</b><p><strong>Relaciona</strong> países co-mencionados en el mismo titular y conserva evidencia.</p></div><div><b>04</b><p><strong>Expone límites</strong>: una ausencia significa “sin dato en esta muestra”, no “no ocurrió”.</p></div></div></DialogContent></Dialog>
   </main>;
 }
