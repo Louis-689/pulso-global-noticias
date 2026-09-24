@@ -89,25 +89,36 @@ function errorMessage(error: unknown): string {
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
 }
-export function newsUrls(request: PulseRequest): { gdelt: string; rss: string } {
+type NewsRssFeed = { name: string; url: string };
+export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFeed[] } {
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
   const topic = request.category === "all" && placeTerms ? "" : CATEGORY_QUERIES[request.category];
   const gdeltParams = new URLSearchParams({ query: `${topic} ${placeTerms} sourcelang:spanish`.trim(), timespan: request.timespan, mode: "artlist", maxrecords: "120", sort: "datedesc", format: "json" });
-  const rssParams = new URLSearchParams({ q: `${topic} ${placeTerms} when:${request.timespan}`.trim(), hl: "es-419", gl: "PE", ceid: "PE:es-419" });
-  return { gdelt: `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}`, rss: `https://news.google.com/rss/search?${rssParams}` };
+  const rssQuery = `${topic} ${placeTerms} when:${request.timespan}`.trim();
+  const editions = [
+    { name: "Google News · Perú", hl: "es-419", gl: "PE", ceid: "PE:es-419" },
+    { name: "Google News · México", hl: "es-419", gl: "MX", ceid: "MX:es-419" },
+    { name: "Google News · España", hl: "es", gl: "ES", ceid: "ES:es" },
+  ];
+  const rss = editions.map((edition) => ({
+    name: edition.name,
+    url: `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`,
+  }));
+  return { gdelt: `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}`, rss };
 }
 export async function loadNews(request: PulseRequest, now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
   const urls = newsUrls(request);
   const sources: PulseSource[] = [];
   const errors: string[] = [];
-  const [gdelt, rss] = await Promise.allSettled([
+  const [gdelt, ...rssResults] = await Promise.allSettled([
     boundedFetchText(urls.gdelt, "json", fetcher).then((text) => {
       const data: unknown = JSON.parse(text);
       if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
       return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
     }),
-    boundedFetchText(urls.rss, "xml", fetcher).then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: "Google News RSS", timestampBasis: "published" }), request.timespan, now)),
+    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher)
+      .then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" }), request.timespan, now))),
   ]);
   const gathered: PulseArticle[] = [];
   if (gdelt.status === "fulfilled") {
@@ -117,13 +128,16 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
     const note = errorMessage(gdelt.reason); errors.push(`GDELT: ${note}`);
     sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: "error", count: 0, note });
   }
-  if (rss.status === "fulfilled") {
-    gathered.push(...rss.value);
-    sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: rss.value.length ? "ok" : "empty", count: rss.value.length, note: "Índice complementario en español. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
-  } else {
-    const note = errorMessage(rss.reason); errors.push(`Google News: ${note}`);
-    sources.push({ name: "Google News RSS", url: "https://news.google.com/", status: "error", count: 0, note });
-  }
+  rssResults.forEach((result, index) => {
+    const feed = urls.rss[index];
+    if (result.status === "fulfilled") {
+      gathered.push(...result.value);
+      sources.push({ name: feed.name, url: "https://news.google.com/", status: result.value.length ? "ok" : "empty", count: result.value.length, note: "Edición regional del índice en español. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
+    } else {
+      const note = errorMessage(result.reason); errors.push(`${feed.name}: ${note}`);
+      sources.push({ name: feed.name, url: "https://news.google.com/", status: "error", count: 0, note });
+    }
+  });
   // Merge both public indexes instead of treating one as a fallback. This
   // improves source diversity while retaining the same bounded 120-item view.
   const articles = filterTimeAndDedupe(gathered, request.timespan, now);
@@ -144,15 +158,16 @@ export function parseEarthquakes(payload: unknown): PulseArticle[] {
   });
 }
 const EARLY_FEEDS = [
-  { name: "USGS", url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson", format: "json", kind: "earthquake", note: "Registros públicos de sismos M2,5+. La fecha indica el evento; los datos preliminares pueden cambiar." },
-  { name: "NASA", url: "https://www.nasa.gov/feed/", format: "xml", kind: "official", note: "Publicaciones oficiales de NASA; pueden haber sido difundidas ya por otros medios." },
-  { name: "arXiv", url: "https://rss.arxiv.org/rss/cs.AI", format: "xml", kind: "preprint", note: "Anuncios públicos de investigación en IA; revisión por pares no verificada. Feed diario, habitualmente vacío los fines de semana." },
+  { name: "USGS", url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson", format: "json", kind: "earthquake", reviewStatus: "preliminary", hosts: ["earthquake.usgs.gov"], note: "Registros públicos de sismos M2,5+. La fecha indica el evento; los datos preliminares pueden cambiar." },
+  { name: "GDACS", url: "https://www.gdacs.org/xml/rss.xml", format: "xml", kind: "official", reviewStatus: "preliminary", hosts: ["gdacs.org", "www.gdacs.org"], note: "Alertas públicas de desastres de GDACS (ONU/Comisión Europea). Son señales operativas y pueden actualizarse." },
+  { name: "NASA", url: "https://www.nasa.gov/feed/", format: "xml", kind: "official", reviewStatus: "unknown", hosts: ["nasa.gov"], note: "Publicaciones oficiales de NASA; pueden haber sido difundidas ya por otros medios." },
+  { name: "arXiv", url: "https://rss.arxiv.org/rss/cs.AI", format: "xml", kind: "preprint", reviewStatus: "not-peer-reviewed", hosts: ["arxiv.org"], note: "Anuncios públicos de investigación en IA; revisión por pares no verificada. Feed diario, habitualmente vacío los fines de semana." },
 ] as const;
 export async function loadEarly(now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
   const settled = await Promise.allSettled(EARLY_FEEDS.map(async (feed) => {
     const text = await boundedFetchText(feed.url, feed.format, fetcher);
-    const articles = feed.kind === "earthquake" ? parseEarthquakes(JSON.parse(text)) : normalizeMany(parseRssItems(text), { provider: feed.name, sourceName: feed.name, kind: feed.kind, timestampBasis: "published", reviewStatus: "unknown" })
-      .filter((article) => feed.name === "NASA" ? article.destinationHost === "nasa.gov" || article.destinationHost.endsWith(".nasa.gov") : article.destinationHost === "arxiv.org");
+    const articles = feed.kind === "earthquake" ? parseEarthquakes(JSON.parse(text)) : normalizeMany(parseRssItems(text), { provider: feed.name, sourceName: feed.name, kind: feed.kind, timestampBasis: "published", reviewStatus: feed.reviewStatus })
+      .filter((article) => feed.hosts.some((host) => article.destinationHost === host || article.destinationHost.endsWith(`.${host}`)));
     return filterTimeAndDedupe(articles, "7d", now);
   }));
   const articles: PulseArticle[] = [];
@@ -182,7 +197,7 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     ...view, mode: request.mode, timespan: request.timespan, category: request.category, pointBasis: "mentionedCountries",
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
-    coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, publicaciones NASA e investigación en IA. Disponibles en Panorama, Ciencia y Tecnología. No garantizan primicia ni predicen acontecimientos; revisión científica de preprints no verificada."
-      : `Muestra combinada de hasta 120 titulares en español. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
+    coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Disponibles en Panorama, Ciencia y Tecnología. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
+      : `Muestra combinada de hasta 120 titulares en español de GDELT y tres ediciones regionales de Google News. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
   };
 }

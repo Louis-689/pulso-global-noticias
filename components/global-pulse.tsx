@@ -52,6 +52,14 @@ function evidenceSummary(article: PulseArticle) {
 function emptyResponse(mode: PulseMode, timespan: PulseTimespan, category: PulseCategory, message: string): PulseResponse {
   return { mode, timespan, category, pointBasis: "mentionedCountries", dataProvider: "Sin resultados disponibles", fetchedAt: new Date().toISOString(), partial: true, sources: [], errors: [message], coverageNote: message, articles: [], points: [], connections: [], rankings: { positive: [], negative: [] }, tension: null, stats: { total: 0, located: 0, unlocated: 0, positive: 0, negative: 0, neutral: 0, scored: 0 } };
 }
+const SAVED_ARCHIVE_KEY = "pulso-global-saved-articles-v2";
+function isSavedArticle(value: unknown): value is PulseArticle {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<PulseArticle>;
+  return typeof item.id === "string" && typeof item.title === "string" && typeof item.url === "string"
+    && typeof item.seenDate === "string" && typeof item.provider === "string" && typeof item.kind === "string"
+    && Array.isArray(item.mentionedCountries) && Array.isArray(item.positiveTerms) && Array.isArray(item.negativeTerms);
+}
 
 export function GlobalPulse() {
   const [category, setCategory] = useState<PulseCategory>("all");
@@ -73,6 +81,7 @@ export function GlobalPulse() {
   const [feedMode, setFeedMode] = useState<FeedMode>("latest");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [saved, setSaved] = useState<string[]>([]);
+  const [savedArchive, setSavedArchive] = useState<PulseArticle[]>([]);
   const [liveMode, setLiveMode] = useState(true);
   const [showConnections, setShowConnections] = useState(false);
   const [flatMap, setFlatMap] = useState(false);
@@ -86,11 +95,15 @@ export function GlobalPulse() {
   const [speaking, setSpeaking] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const requestRef = useRef(0);
+  const dataRef = useRef<PulseResponse | null>(null);
+  const placeRequestRef = useRef(0);
+  const placeAbortRef = useRef<AbortController | null>(null);
   const countryName = countries.find((item) => item.code === country)?.name;
 
-  const fetchPulse = useCallback(async (signal?: AbortSignal) => {
+  const fetchPulse = useCallback(async (signal?: AbortSignal, preserveCurrent = false) => {
     const requestId = ++requestRef.current;
-    setLoading(true); setError(""); setData(null);
+    setLoading(true); setError("");
+    if (!preserveCurrent) { dataRef.current = null; setData(null); }
     const params = new URLSearchParams({ category, timespan, mode });
     if (country) params.set("country", country);
     if (query) params.set("q", query);
@@ -98,28 +111,44 @@ export function GlobalPulse() {
       const response = await fetch(`/api/pulse?${params}`, { signal, headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(String(response.status));
       const result = await response.json() as PulseResponse;
-      if (requestRef.current === requestId) setData(result);
+      if (requestRef.current === requestId) { dataRef.current = result; setData(result); }
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       if (requestRef.current !== requestId) return;
       const message = "No pudimos actualizar las fuentes. Vuelve a intentarlo.";
-      setError(message); setData(emptyResponse(mode, timespan, category, message));
+      setError(message);
+      if (!preserveCurrent || !dataRef.current) {
+        const fallback = emptyResponse(mode, timespan, category, message);
+        dataRef.current = fallback; setData(fallback);
+      }
     } finally { if (requestRef.current === requestId) setLoading(false); }
   }, [category, timespan, mode, country, query]);
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal); });
+    queueMicrotask(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal, false); });
     return () => controller.abort();
   }, [fetchPulse]);
   useEffect(() => {
     if (!liveMode) return;
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void fetchPulse(); }, 3 * 60 * 1000);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible") void fetchPulse(undefined, true); };
+    const refreshIfStale = () => {
+      const fetchedAt = Date.parse(dataRef.current?.fetchedAt || "");
+      if (document.visibilityState === "visible" && (!Number.isFinite(fetchedAt) || Date.now() - fetchedAt >= 3 * 60 * 1000)) refresh();
+    };
+    const timer = window.setInterval(refresh, 3 * 60 * 1000);
+    document.addEventListener("visibilitychange", refreshIfStale);
+    window.addEventListener("online", refreshIfStale);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refreshIfStale); window.removeEventListener("online", refreshIfStale); };
   }, [fetchPulse, liveMode]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      try { setSaved(JSON.parse(localStorage.getItem("pulso-global-saved") || "[]")); } catch { setSaved([]); }
+      try {
+        const ids: unknown = JSON.parse(localStorage.getItem("pulso-global-saved") || "[]");
+        const archive: unknown = JSON.parse(localStorage.getItem(SAVED_ARCHIVE_KEY) || "[]");
+        setSaved(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string").slice(-200) : []);
+        setSavedArchive(Array.isArray(archive) ? archive.filter(isSavedArticle).slice(-200) : []);
+      } catch { setSaved([]); setSavedArchive([]); }
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -146,8 +175,8 @@ export function GlobalPulse() {
         if (typeof value.category === "string" && CATEGORIES.some(([id]) => id === value.category)) setCategory(value.category as PulseCategory);
         if (typeof value.timespan === "string" && WINDOWS.some(([id]) => id === value.timespan)) setTimespan(value.timespan as PulseTimespan);
         if (value.mode === "news" || value.mode === "early") setMode(value.mode);
-        if (typeof value.country === "string" && /^[A-Z]{2}$/.test(value.country)) setCountry(value.country);
-        if (typeof value.query === "string" && value.query.length <= 100) { setSearchDraft(value.query); setQuery(value.query.trim()); }
+        if (typeof value.country === "string" && /^[A-Z]{2}$/.test(value.country)) { setCountry(value.country); setSelectedPlace(null); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); }
+        if (typeof value.query === "string" && value.query.length <= 100) { setSelectedPlace(null); setSearchDraft(value.query); setQuery(value.query.trim()); }
         return { accepted: true };
       },
     }, { signal: lifecycle.signal })).catch(() => undefined);
@@ -159,14 +188,14 @@ export function GlobalPulse() {
     const selected = feedMode === "positive" ? data?.rankings.positive ?? []
       : feedMode === "negative" ? data?.rankings.negative ?? []
       : feedMode === "signals" ? articles.filter((item) => item.kind !== "news" || item.positiveTerms.length + item.negativeTerms.length > 0)
-      : feedMode === "saved" ? articles.filter((item) => saved.includes(item.id))
+      : feedMode === "saved" ? [...new Map([...articles.filter((item) => saved.includes(item.id)), ...savedArchive.filter((item) => saved.includes(item.id))].map((item) => [item.id, item])).values()]
       : articles;
     return [...selected].sort((a, b) => {
       if (sortMode === "coverage") return b.mentionedCountries.length - a.mentionedCountries.length || Date.parse(b.publishedAt || b.seenDate) - Date.parse(a.publishedAt || a.seenDate);
       if (sortMode === "signal") return (b.positiveTerms.length + b.negativeTerms.length + (b.kind === "official" || b.kind === "preprint" || b.kind === "earthquake" ? 3 : 0)) - (a.positiveTerms.length + a.negativeTerms.length + (a.kind === "official" || a.kind === "preprint" || a.kind === "earthquake" ? 3 : 0));
       return Date.parse(b.publishedAt || b.seenDate) - Date.parse(a.publishedAt || a.seenDate);
     });
-  }, [feedMode, sortMode, data?.rankings, articles, saved]);
+  }, [feedMode, sortMode, data?.rankings, articles, saved, savedArchive]);
   const connectionArticles = useMemo(() => selectedConnection ? articles.filter((item) => selectedConnection.articleIds.includes(item.id)) : [], [selectedConnection, articles]);
   const scenarioModel = useMemo(() => {
     const stats = data?.stats; const scored = stats?.scored || 0; const total = stats?.total || 0;
@@ -200,15 +229,35 @@ export function GlobalPulse() {
   async function searchPlace(event: FormEvent) {
     event.preventDefault(); const term = placeDraft.trim();
     if (term.length < 2) { setPlaceMessage("Escribe al menos dos letras."); return; }
+    placeAbortRef.current?.abort();
+    const controller = new AbortController(); placeAbortRef.current = controller;
+    const requestId = ++placeRequestRef.current;
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
     setPlaceLoading(true); setPlaceMessage(""); setPlaceResults([]);
     const params = new URLSearchParams({ q: term }); if (country) params.set("country", country); if (selectedPlace?.region) params.set("parent", selectedPlace.region);
-    try { const response = await fetch(`/api/places?${params}`); const result = await response.json() as PlacesResponse; setPlaceResults(result.results || []); setPlaceMessage(result.error || (result.results.length ? result.coverageNote : "No encontramos ese lugar. Prueba su nombre oficial.")); }
-    catch { setPlaceMessage("La búsqueda geográfica no está disponible ahora."); } finally { setPlaceLoading(false); }
+    try {
+      const response = await fetch(`/api/places?${params}`, { signal: controller.signal, headers: { Accept: "application/json" } });
+      const result = await response.json() as PlacesResponse;
+      if (placeRequestRef.current !== requestId) return;
+      setPlaceResults(result.results || []); setPlaceMessage(result.error || (result.results.length ? result.coverageNote : "No encontramos ese lugar. Prueba su nombre oficial."));
+    } catch (cause) {
+      if (placeRequestRef.current === requestId) setPlaceMessage(cause instanceof DOMException && cause.name === "AbortError" ? "La búsqueda tardó demasiado. Inténtalo otra vez." : "La búsqueda geográfica no está disponible ahora.");
+    } finally {
+      window.clearTimeout(timeout);
+      if (placeRequestRef.current === requestId) { placeAbortRef.current = null; setPlaceLoading(false); }
+    }
   }
-  function choosePlace(place: PlaceResult) { setSelectedPlace(place); setCountry(place.countryCode); setPlaceDraft(place.name); setPlaceResults([]); setSearchDraft(place.name); setQuery(place.name); setMode("news"); }
-  function clearLocation() { setSelectedPlace(null); setCountry(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); setQuery(""); setSearchDraft(""); setResetKey((value) => value + 1); }
-  function selectCountry(code: string) { setSelectedPlace(null); setCountry(code); setQuery(""); setSearchDraft(""); setPlaceMessage(""); }
-  function toggleSaved(article: PulseArticle) { setSaved((current) => { const next = current.includes(article.id) ? current.filter((id) => id !== article.id) : [...current, article.id].slice(-200); localStorage.setItem("pulso-global-saved", JSON.stringify(next)); return next; }); }
+  function cancelPlaceSearch() { placeRequestRef.current += 1; placeAbortRef.current?.abort(); placeAbortRef.current = null; setPlaceLoading(false); }
+  function choosePlace(place: PlaceResult) { cancelPlaceSearch(); setSelectedPlace(place); setCountry(place.countryCode); setPlaceDraft(place.name); setPlaceResults([]); setSearchDraft(place.name); setQuery(place.name); setMode("news"); }
+  function clearLocation() { cancelPlaceSearch(); setSelectedPlace(null); setCountry(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); setQuery(""); setSearchDraft(""); setResetKey((value) => value + 1); }
+  function selectCountry(code: string) { cancelPlaceSearch(); setSelectedPlace(null); setCountry(code); setQuery(""); setSearchDraft(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); }
+  function toggleSaved(article: PulseArticle) {
+    const removing = saved.includes(article.id);
+    const nextIds = removing ? saved.filter((id) => id !== article.id) : [...saved.filter((id) => id !== article.id), article.id].slice(-200);
+    const nextArchive = removing ? savedArchive.filter((item) => item.id !== article.id) : [...savedArchive.filter((item) => item.id !== article.id), article].slice(-200);
+    setSaved(nextIds); setSavedArchive(nextArchive);
+    try { localStorage.setItem("pulso-global-saved", JSON.stringify(nextIds)); localStorage.setItem(SAVED_ARCHIVE_KEY, JSON.stringify(nextArchive)); } catch { /* The UI still works for this session when storage is unavailable. */ }
+  }
   function toggleBriefing() {
     if (!("speechSynthesis" in window)) return;
     if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
@@ -223,7 +272,7 @@ export function GlobalPulse() {
     <header className="app-header">
       <button className="brand" onClick={clearLocation} aria-label="Volver al panorama mundial"><span className="brand-orbit"><Globe2 /></span><span><strong>PULSO</strong> GLOBAL<small>observatorio geográfico</small></span></button>
       <form className="global-search" onSubmit={submitSearch} role="search"><Search /><input ref={searchRef} value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Buscar tema, país o titular" aria-label="Buscar noticias" />{searchDraft && <button type="button" className="clear-search" onClick={() => { setSearchDraft(""); setQuery(""); setSelectedPlace(null); }} aria-label="Limpiar búsqueda"><X /></button>}<kbd>Ctrl K</kbd></form>
-      <div className="header-actions"><button className={liveMode ? "pulse-control active" : "pulse-control"} onClick={() => setLiveMode((value) => !value)} aria-pressed={liveMode}><span className="pulse-core"><Radio /></span><span><strong>{liveMode ? "EN VIVO" : "PAUSADO"}</strong><small>{liveMode ? "pulso cada 3 min" : "actualización manual"}</small></span></button><button className="header-button" onClick={toggleBriefing} disabled={!visibleArticles.length}>{speaking ? <Pause /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="refresh-button" onClick={() => void fetchPulse()} disabled={loading} aria-label="Actualizar fuentes"><RefreshCw className={loading ? "spin" : ""} /></button></div>
+      <div className="header-actions"><button className={liveMode ? "pulse-control active" : "pulse-control"} onClick={() => setLiveMode((value) => !value)} aria-pressed={liveMode}><span className="pulse-core"><Radio /></span><span><strong>{liveMode ? "EN VIVO" : "PAUSADO"}</strong><small>{liveMode ? "pulso cada 3 min" : "actualización manual"}</small></span></button><button className="header-button" onClick={toggleBriefing} disabled={!visibleArticles.length}>{speaking ? <Pause /> : <Volume2 />}<span>{speaking ? "Detener" : "Briefing"}</span></button><button className="refresh-button" onClick={() => void fetchPulse(undefined, true)} disabled={loading} aria-label="Actualizar fuentes sin vaciar la vista"><RefreshCw className={loading ? "spin" : ""} /></button></div>
     </header>
 
     <aside className="side-rail" aria-label="Navegación principal">
@@ -248,6 +297,7 @@ export function GlobalPulse() {
 
     <section className="workspace">
       <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos situados solo cuando el lugar aparece explícitamente en la fuente."}</p><button className="source-ribbon" onClick={() => setSourcesOpen(true)} aria-label="Ver fuentes y cobertura"><ShieldCheck /><span>Fuentes públicas trazables</span>{data?.sources.slice(0, 4).map((source) => <span className={`source-seal ${source.status}`} key={source.name}>{source.name}<i>{source.count}</i></span>)}<ChevronRight className="source-arrow" /></button></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
+      {error && <div className="refresh-warning" role="alert"><AlertTriangle /><span><strong>La actualización falló.</strong> {data?.articles.length ? "Conservamos la última muestra visible para no interrumpir tu análisis." : error}</span><button onClick={() => void fetchPulse(undefined, true)} disabled={loading}>Reintentar</button></div>}
       <div className="filter-bar">
         <label className="mobile-topic"><span>Tema</span><select value={category} onChange={(event) => setCategory(event.target.value as PulseCategory)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label><span>País</span><select value={country} onChange={(event) => selectCountry(event.target.value)}><option value="">Todo el mundo</option>{countries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
@@ -266,8 +316,8 @@ export function GlobalPulse() {
 
         <aside className="news-panel" aria-label="Noticias de la consulta">
           <div className="news-heading"><div><span className="eyebrow">COBERTURA</span><h2>{mode === "early" ? "Señales verificables" : "Últimos titulares"}</h2></div><div className="news-tools"><label className="sort-control"><SlidersHorizontal /><span className="sr-only">Ordenar noticias</span><select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} aria-label="Ordenar noticias"><option value="newest">Más recientes</option><option value="coverage">Mayor alcance</option><option value="signal">Señal destacada</option></select></label><span className="result-count">{visibleArticles.length}</span></div></div>
-          <div className="feed-tabs" role="tablist"><button role="tab" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button><button role="tab" aria-selected={feedMode === "signals"} className={feedMode === "signals" ? "active" : ""} onClick={() => setFeedMode("signals")}>Señales</button><button role="tab" aria-selected={feedMode === "positive"} className={feedMode === "positive" ? "active" : ""} onClick={() => setFeedMode("positive")}>Impulso</button><button role="tab" aria-selected={feedMode === "negative"} className={feedMode === "negative" ? "active" : ""} onClick={() => setFeedMode("negative")}>Presión</button></div>
-          <div className="feed" aria-busy={loading}>{loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}{!loading && visibleArticles.length === 0 && <div className="empty-state"><Database /><strong>Sin resultados para esta combinación</strong><p>Amplía la ventana, cambia el tema o borra el lugar. No rellenamos huecos con datos inventados.</p></div>}{visibleArticles.map((article) => <article className="story" key={article.id}><button className="story-open" onClick={() => setSelectedArticle(article)}><div className="story-meta"><span>{kindLabel(article)}</span><time dateTime={article.publishedAt || article.seenDate}><Clock3 />{relativeTime(article.publishedAt || article.seenDate)}</time></div><h3>{article.title}</h3><div className="story-bottom"><span>{sourceLabel(article)}</span><span>{article.mentionedCountries.slice(0, 2).map((item) => item.name).join(" · ") || "sin lugar explícito"}</span><ChevronRight /></div></button><button className="save-story" onClick={() => toggleSaved(article)} aria-label={saved.includes(article.id) ? "Quitar de guardadas" : "Guardar noticia"}>{saved.includes(article.id) ? <BookmarkCheck /> : <Bookmark />}</button></article>)}</div>
+          <div className="feed-tabs" role="tablist"><button role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button><button role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "signals"} className={feedMode === "signals" ? "active" : ""} onClick={() => setFeedMode("signals")}>Señales</button><button role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "positive"} className={feedMode === "positive" ? "active" : ""} onClick={() => setFeedMode("positive")}>Impulso</button><button role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "negative"} className={feedMode === "negative" ? "active" : ""} onClick={() => setFeedMode("negative")}>Presión</button></div>
+          <div className="feed" id="pulse-feed" role="tabpanel" aria-live="polite" aria-busy={loading}>{loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}{!loading && visibleArticles.length === 0 && <div className="empty-state"><Database /><strong>{feedMode === "saved" ? "Todavía no guardaste noticias" : "Sin resultados para esta combinación"}</strong><p>{feedMode === "saved" ? "Usa el marcador de cualquier ficha para conservarla aunque cambies de filtro o actualices las fuentes." : "Amplía la ventana, cambia el tema o borra el lugar. No rellenamos huecos con datos inventados."}</p></div>}{visibleArticles.map((article) => <article className="story" key={article.id}><button className="story-open" onClick={() => setSelectedArticle(article)}><div className="story-meta"><span>{kindLabel(article)}</span><time dateTime={article.publishedAt || article.seenDate}><Clock3 />{relativeTime(article.publishedAt || article.seenDate)}</time></div><h3>{article.title}</h3><div className="story-bottom"><span>{sourceLabel(article)}</span><span>{article.mentionedCountries.slice(0, 2).map((item) => item.name).join(" · ") || "sin lugar explícito"}</span><ChevronRight /></div></button><button className="save-story" onClick={() => toggleSaved(article)} aria-label={saved.includes(article.id) ? "Quitar de guardadas" : "Guardar noticia"}>{saved.includes(article.id) ? <BookmarkCheck /> : <Bookmark />}</button></article>)}</div>
           <div className="coverage-note"><Info /><span>{data?.coverageNote || "La cobertura depende de fuentes públicas disponibles."}</span></div>
         </aside>
       </div>

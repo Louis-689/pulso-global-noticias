@@ -1,6 +1,6 @@
 import { feature } from "topojson-client";
 import worldAtlas from "world-atlas/countries-110m.json";
-import worldCountries from "world-countries";
+import countryData from "./country-data.json";
 
 export type PulseCountry = { code: string; name: string; lat: number; lng: number };
 export type WorldFeature = {
@@ -10,17 +10,17 @@ export type WorldFeature = {
   geometry: { type: "Polygon"; coordinates: number[][][] } | { type: "MultiPolygon"; coordinates: number[][][][] };
 };
 
-export const countries: PulseCountry[] = worldCountries
+export const countries: PulseCountry[] = countryData
   .map((country) => ({
-    code: country.cca2,
-    name: country.translations.spa?.common || country.name.common,
-    lat: country.latlng[0],
-    lng: country.latlng[1],
+    code: country.code,
+    name: country.name,
+    lat: country.lat,
+    lng: country.lng,
   }))
   .sort((a, b) => a.name.localeCompare(b.name, "es"));
 
-const numericCountries = new Map(worldCountries.filter((country) => country.ccn3).map((country) => [String(Number(country.ccn3)), country]));
-const namedCountries = new Map(worldCountries.map((country) => [country.name.common.toLowerCase(), country]));
+const numericCountries = new Map(countryData.filter((country) => country.numeric).map((country) => [String(Number(country.numeric)), country]));
+const namedCountries = new Map(countryData.map((country) => [country.commonEnglish.toLowerCase(), country]));
 const atlasFeatures = feature(
   worldAtlas as unknown as Parameters<typeof feature>[0],
   worldAtlas.objects.countries as unknown as Parameters<typeof feature>[1],
@@ -32,8 +32,8 @@ export const worldFeatures: WorldFeature[] = atlasFeatures.features.map((item) =
     ...item,
     properties: {
       ...item.properties,
-      code: country?.cca2 || "",
-      spanishName: country?.translations.spa?.common || item.properties.name,
+      code: country?.code || "",
+      spanishName: country?.name || item.properties.name,
     },
   };
 });

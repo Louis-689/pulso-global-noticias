@@ -1,7 +1,7 @@
-import countriesData from "world-countries";
+import countriesData from "./country-data.json";
 import type { MentionedCountry, PulseArticle, PulseConnection, PulsePoint, PulseTimespan, PulseView } from "./pulse-types";
 
-type CountryRecord = { cca2: string; name: { common: string; official: string }; translations: { spa?: { common: string; official: string } }; latlng: number[] };
+type CountryRecord = { code: string; numeric: string; name: string; commonEnglish: string; officialEnglish: string; officialSpanish: string; lat: number; lng: number };
 const countries = countriesData as CountryRecord[];
 const extraAliases: Record<string, string[]> = {
   US: ["United States", "Estados Unidos", "EE. UU.", "EE.UU.", "USA"],
@@ -24,17 +24,17 @@ const cityAliases: Record<string, string[]> = {
 const ambiguousNames = new Set(["congo", "georgia", "jordan", "chad", "reunion", "guayana", "guiana"]);
 const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const countryByCode = new Map(countries.map((country) => [country.cca2, country]));
+const countryByCode = new Map(countries.map((country) => [country.code, country]));
 const aliases = countries.flatMap((country) => {
-  const names = [country.name.common, country.name.official, country.translations.spa?.common, country.translations.spa?.official, ...(extraAliases[country.cca2] ?? [])];
-  return [...new Set(names.filter((name): name is string => Boolean(name) && !ambiguousNames.has(fold(name!))))]
-    .filter((name) => name.length >= 4 || (extraAliases[country.cca2] ?? []).includes(name))
+  const names = [country.commonEnglish, country.officialEnglish, country.name, country.officialSpanish, ...(extraAliases[country.code] ?? [])];
+  return [...new Set(names.filter((name) => Boolean(name) && !ambiguousNames.has(fold(name))))]
+    .filter((name) => name.length >= 4 || (extraAliases[country.code] ?? []).includes(name))
     .map((name) => ({ country, alias: fold(name), city: false }));
-}).concat(countries.flatMap((country) => (cityAliases[country.cca2] ?? []).map((name) => ({ country, alias: fold(name), city: true }))));
+}).concat(countries.flatMap((country) => (cityAliases[country.code] ?? []).map((name) => ({ country, alias: fold(name), city: true }))));
 
 export function countrySearchName(code: string): { english: string; spanish: string } | null {
   const country = countryByCode.get(code.toUpperCase());
-  return country ? { english: country.name.common, spanish: country.translations.spa?.common ?? country.name.common } : null;
+  return country ? { english: country.commonEnglish, spanish: country.name } : null;
 }
 
 export function cleanText(value: unknown, maxLength = 700): string {
@@ -95,14 +95,14 @@ export function detectMentionedCountries(title: string): MentionedCountry[] {
       const original = title.slice(start, start + entry.alias.length);
       if (entry.city && original[0] === original[0]?.toLowerCase()) continue;
       // New Mexico is a US state; bare Mexico inside it is not a country mention.
-      if (entry.country.cca2 === "MX" && /(?:new|nuevo) $/.test(text.slice(0, start))) continue;
+      if (entry.country.code === "MX" && /(?:new|nuevo) $/.test(text.slice(0, start))) continue;
       hits.push({ start, end: start + entry.alias.length, country: entry.country, evidence: original });
     }
   }
   const selected = hits.filter((hit) => !hits.some((other) => other !== hit && other.start <= hit.start && other.end >= hit.end && other.end - other.start > hit.end - hit.start));
   const unique = new Map<string, MentionedCountry>();
   for (const hit of selected) {
-    if (!unique.has(hit.country.cca2)) unique.set(hit.country.cca2, { code: hit.country.cca2, name: hit.country.translations.spa?.common ?? hit.country.name.common, lat: hit.country.latlng[0], lng: hit.country.latlng[1], evidence: hit.evidence });
+    if (!unique.has(hit.country.code)) unique.set(hit.country.code, { code: hit.country.code, name: hit.country.name, lat: hit.country.lat, lng: hit.country.lng, evidence: hit.evidence });
   }
   return [...unique.values()].slice(0, 12);
 }
@@ -199,7 +199,11 @@ export function parseRssItems(xml: string): Array<Record<string, unknown>> {
   for (const match of xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)) {
     const item = match[1];
     const pick = (tag: string) => cleanText(item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"))?.[1], tag === "link" ? 2500 : 700);
-    articles.push({ title: pick("title"), url: pick("link"), sourceName: pick("source"), timestamp: pick("pubDate"), announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference") });
+    const [lat, lng] = pick("georss:point").split(/\s+/).map(Number);
+    const location = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
+      ? { lat, lng, label: pick("gdacs:country") || pick("title") }
+      : undefined;
+    articles.push({ title: pick("title"), url: pick("link"), sourceName: pick("source"), timestamp: pick("pubDate"), announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference"), ...(location ? { location } : {}) });
     if (articles.length >= 500) break;
   }
   return articles;
