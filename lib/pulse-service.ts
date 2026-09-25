@@ -4,12 +4,17 @@ import type { ArticleContext } from "./pulse-data";
 import type { PulseArticle, PulseCategory, PulseMode, PulseResponse, PulseSource, PulseTimespan } from "./pulse-types";
 
 const CATEGORY_QUERIES: Record<PulseCategory, string> = {
-  all: "(política OR economía OR tecnología OR ciencia OR clima OR salud OR internacional)",
-  politics: "(política OR gobierno OR elecciones OR diplomacia)", economy: "(economía OR mercados OR comercio OR inflación)",
-  technology: '(tecnología OR "inteligencia artificial" OR ciberseguridad)', science: "(ciencia OR investigación OR espacio)",
-  health: "(salud OR medicina OR epidemia)", climate: "(clima OR ambiente OR inundación OR sequía)",
-  security: "(conflicto OR seguridad OR guerra)", culture: "(cultura OR arte OR sociedad)",
-  sports: "(deportes OR fútbol OR atletismo)", education: "(educación OR escuelas OR universidad)",
+  all: "(política OR politics OR politique OR economia OR economy OR économie OR tecnología OR technology OR ciência OR science OR clima OR climate OR santé OR saúde OR health OR internacional OR international)",
+  politics: "(política OR politics OR politique OR governo OR government OR gobierno OR elecciones OR elections OR diplomatie OR diplomacy)",
+  economy: "(economía OR economia OR economy OR économie OR mercados OR markets OR commerce OR inflação OR inflation)",
+  technology: '(tecnología OR tecnologia OR technology OR technologie OR "inteligencia artificial" OR "artificial intelligence" OR ciberseguridad OR cybersecurity)',
+  science: "(ciencia OR ciência OR science OR recherche OR research OR espacio OR space)",
+  health: "(salud OR saúde OR health OR santé OR medicina OR medicine OR epidemia OR outbreak)",
+  climate: "(clima OR climate OR climat OR ambiente OR environment OR inundación OR flood OR sequía OR drought)",
+  security: "(conflicto OR conflict OR sécurité OR segurança OR security OR guerra OR war)",
+  culture: "(cultura OR culture OR arte OR art OR sociedad OR society)",
+  sports: "(deportes OR esportes OR sports OR sport OR fútbol OR football OR athletics)",
+  education: "(educación OR educação OR education OR écoles OR schools OR universidad OR university)",
 };
 export type PulseRequest = { category: PulseCategory; timespan: PulseTimespan; mode: PulseMode; country: string; query: string };
 export function parsePulseRequest(params: URLSearchParams): PulseRequest {
@@ -94,13 +99,20 @@ export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFe
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
   const topic = request.category === "all" && placeTerms ? "" : CATEGORY_QUERIES[request.category];
-  const gdeltParams = new URLSearchParams({ query: `${topic} ${placeTerms} sourcelang:spanish`.trim(), timespan: request.timespan, mode: "artlist", maxrecords: "120", sort: "datedesc", format: "json" });
+  const gdeltParams = new URLSearchParams({ query: `${topic} ${placeTerms}`.trim(), timespan: request.timespan, mode: "artlist", maxrecords: "120", sort: "datedesc", format: "json" });
   const rssQuery = `${topic} ${placeTerms} when:${request.timespan}`.trim();
   const editions = [
-    { name: "Google News · Perú", hl: "es-419", gl: "PE", ceid: "PE:es-419" },
-    { name: "Google News · México", hl: "es-419", gl: "MX", ceid: "MX:es-419" },
-    { name: "Google News · España", hl: "es", gl: "ES", ceid: "ES:es" },
+    { code: "PE", name: "Google News · Perú", hl: "es-419", gl: "PE", ceid: "PE:es-419" },
+    { code: "MX", name: "Google News · México", hl: "es-419", gl: "MX", ceid: "MX:es-419" },
+    { code: "ES", name: "Google News · España", hl: "es", gl: "ES", ceid: "ES:es" },
+    { code: "US", name: "Google News · Global inglés", hl: "en-US", gl: "US", ceid: "US:en" },
+    { code: "BR", name: "Google News · Brasil", hl: "pt-BR", gl: "BR", ceid: "BR:pt-419" },
+    { code: "FR", name: "Google News · Francia", hl: "fr", gl: "FR", ceid: "FR:fr" },
+    { code: "IN", name: "Google News · India", hl: "en-IN", gl: "IN", ceid: "IN:en" },
   ];
+  if (country && !editions.some((edition) => edition.code === request.country)) {
+    editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en` });
+  }
   const rss = editions.map((edition) => ({
     name: edition.name,
     url: `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`,
@@ -123,7 +135,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const gathered: PulseArticle[] = [];
   if (gdelt.status === "fulfilled") {
     gathered.push(...gdelt.value);
-    sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: gdelt.value.length ? "ok" : "empty", count: gdelt.value.length, note: "Índice global. La hora indica detección por GDELT, no acredita cuándo publicó el medio." });
+    sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: gdelt.value.length ? "ok" : "empty", count: gdelt.value.length, note: "Índice global multilingüe. La hora indica detección por GDELT, no acredita cuándo publicó el medio." });
   } else {
     const note = errorMessage(gdelt.reason); errors.push(`GDELT: ${note}`);
     sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: "error", count: 0, note });
@@ -132,7 +144,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
     const feed = urls.rss[index];
     if (result.status === "fulfilled") {
       gathered.push(...result.value);
-      sources.push({ name: feed.name, url: "https://news.google.com/", status: result.value.length ? "ok" : "empty", count: result.value.length, note: "Edición regional del índice en español. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
+      sources.push({ name: feed.name, url: "https://news.google.com/", status: result.value.length ? "ok" : "empty", count: result.value.length, note: "Edición regional del índice en su idioma configurado. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
     } else {
       const note = errorMessage(result.reason); errors.push(`${feed.name}: ${note}`);
       sources.push({ name: feed.name, url: "https://news.google.com/", status: "error", count: 0, note });
@@ -198,6 +210,6 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
     coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Disponibles en Panorama, Ciencia y Tecnología. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
-      : `Muestra combinada de hasta 120 titulares en español de GDELT y tres ediciones regionales de Google News. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
+      : `Muestra combinada de hasta 120 titulares multilingües de GDELT y ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones regionales de Google News. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
   };
 }
