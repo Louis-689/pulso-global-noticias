@@ -10,6 +10,7 @@ import type { PlaceResult, PlacesResponse } from "@/lib/pulse-places-types";
 import type { PulseArticle, PulseCategory, PulseConnection, PulseMode, PulseResponse, PulseTimespan } from "@/lib/pulse-types";
 
 const PulseGlobe = dynamic(() => import("@/components/pulse-globe"), { ssr: false, loading: () => <MapLoading label="Preparando la Tierra…" /> });
+const CesiumPulseGlobe = dynamic(() => import("@/components/cesium-pulse-globe"), { ssr: false, loading: () => <MapLoading label="Cargando motor geoespacial…" /> });
 
 const CATEGORIES: Array<[PulseCategory, string]> = [
   ["all", "Panorama mundial"], ["politics", "Política"], ["economy", "Economía y mercados"],
@@ -28,6 +29,7 @@ type FeedMode = "latest" | "signals" | "positive" | "negative" | "saved";
 type SortMode = "newest" | "coverage" | "signal";
 type ScenarioLens = "human" | "economy" | "science";
 type ScenarioHorizon = "24h" | "7d" | "30d";
+type MapMode = "realistic" | "illustrated" | "flat";
 type WebMcpContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
 
 function MapLoading({ label }: { label: string }) { return <div className="map-loading"><Loader2 className="spin" aria-hidden="true" /><span>{label}</span></div>; }
@@ -84,7 +86,7 @@ export function GlobalPulse() {
   const [savedArchive, setSavedArchive] = useState<PulseArticle[]>([]);
   const [liveMode, setLiveMode] = useState(true);
   const [showConnections, setShowConnections] = useState(false);
-  const [flatMap, setFlatMap] = useState(false);
+  const [mapMode, setMapMode] = useState<MapMode>("realistic");
   const [mapExpanded, setMapExpanded] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [scenarioOpen, setScenarioOpen] = useState(false);
@@ -273,7 +275,7 @@ export function GlobalPulse() {
     utterance.lang = "es-PE"; utterance.rate = 1; utterance.onend = () => setSpeaking(false); utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); setSpeaking(true);
   }
-  const title = selectedPlace?.displayName || countryName || (mode === "early" ? "Señales públicas tempranas" : "Panorama mundial");
+  const title = selectedPlace?.displayName || countryName || (mode === "early" ? "Señales públicas tempranas" : categoryLabel(category));
 
   return <main className="world-console">
     <header className="app-header">
@@ -310,14 +312,14 @@ export function GlobalPulse() {
         <label><span>País</span><select value={country} onChange={(event) => selectCountry(event.target.value)}><option value="">Todo el mundo</option>{countries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
         <label><span>Ventana</span><select value={timespan} onChange={(event) => setTimespan(event.target.value as PulseTimespan)}>{WINDOWS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <form className="place-search" onSubmit={searchPlace}><label htmlFor="place-query">Región, ciudad o pueblo</label><div><MapPin /><input id="place-query" value={placeDraft} onChange={(event) => setPlaceDraft(event.target.value)} placeholder={country ? `Buscar dentro de ${countryName}` : "Ej. Písac, Cusco"} /><button disabled={placeLoading}>{placeLoading ? <Loader2 className="spin" /> : "Ir"}</button></div></form>
-        <div className="view-switch" aria-label="Vista del mapa"><button className={!flatMap ? "active" : ""} onClick={() => setFlatMap(false)}>3D</button><button className={flatMap ? "active" : ""} onClick={() => setFlatMap(true)}>2D</button></div>
+        <div className="view-switch" aria-label="Vista del mapa"><button className={mapMode === "realistic" ? "active" : ""} onClick={() => setMapMode("realistic")}>Realista</button><button className={mapMode === "illustrated" ? "active" : ""} onClick={() => setMapMode("illustrated")}>Arte</button><button className={mapMode === "flat" ? "active" : ""} onClick={() => setMapMode("flat")}>2D</button></div>
       </div>
       {(placeResults.length > 0 || placeMessage) && <div className="place-results" aria-live="polite">{placeResults.map((place) => <button key={place.id} onClick={() => choosePlace(place)}><MapPin /><span><strong>{place.name}</strong><small>{place.displayName} · {place.type === "region" ? "región" : place.type === "city" ? "ciudad" : "localidad"}</small></span><ArrowRight /></button>)}{placeMessage && <p>{placeMessage} <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">Geografía: GeoNames/Open-Meteo</a></p>}</div>}
 
       <div className={`content-grid${mapExpanded ? " map-expanded" : ""}`}>
         <section className="map-panel" aria-label="Mapa mundial de noticias">
           <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button><button className={mapExpanded ? "active" : ""} onClick={() => setMapExpanded((value) => !value)} aria-label={mapExpanded ? "Salir de la vista orbital amplia" : "Ampliar el planeta"} title={mapExpanded ? "Salir de vista amplia (Esc)" : "Vista orbital amplia"}>{mapExpanded ? <Minimize2 /> : <Maximize2 />}<span>{mapExpanded ? "Reducir" : "Ampliar"}</span></button></div></div>
-          <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={flatMap} resetKey={resetKey} live={liveMode} />}<div className="map-legend">{selectedPlace && <span><i className="dot selected" /> lugar seleccionado</span>}<span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
+          <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : mapMode === "realistic" ? <CesiumPulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} resetKey={resetKey} /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={mapMode === "flat"} resetKey={resetKey} live={liveMode} />}<div className="map-legend">{selectedPlace && <span><i className="dot selected" /> lugar seleccionado</span>}<span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
           <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>por mención</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
         </section>
 

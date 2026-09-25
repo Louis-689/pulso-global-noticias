@@ -216,6 +216,14 @@ svg { flex: 0 0 auto; }
 .globe-frame::after { content: ""; position: absolute; inset: -30% -80%; z-index: 4; pointer-events: none; background: linear-gradient(105deg, transparent 44%, rgba(255,239,191,.11) 50%, transparent 56%); transform: translateX(-35%); animation: observatorySweep 12s ease-in-out infinite; }
 .globe-host { position: relative; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(ellipse at center, rgba(84,150,148,.13), rgba(12,42,48,.2)); }
 .globe-host > canvas { filter: saturate(1.08) contrast(1.03); }
+.cesium-globe, .cesium-canvas, .cesium-canvas .cesium-viewer, .cesium-canvas .cesium-viewer-cesiumWidgetContainer, .cesium-canvas .cesium-widget, .cesium-canvas canvas { position: relative; width: 100%; height: 100%; }
+.cesium-globe { overflow: hidden; background: radial-gradient(circle at 50% 46%, #1b6670 0%, #0b2c35 62%, #061b22 100%); }
+.cesium-canvas { position: absolute; inset: 0; }
+.cesium-canvas .cesium-widget-credits { right: 8px; bottom: 3px; max-width: calc(100% - 16px); opacity: .72; }
+.cesium-globe > .globe-controls { bottom: 44px !important; }
+.cesium-globe + .map-legend { bottom: 42px; }
+.cesium-failure { position: absolute; inset: 0; z-index: 7; display: grid; place-content: center; gap: 5px; padding: 24px; color: #f5e8c8; background: #14393a; text-align: center; }
+.cesium-failure span { color: #b9d2cb; font-size: .76rem; }
 .globe-host:focus-visible { outline: 3px solid rgba(244,192,95,.9); outline-offset: -4px; }
 .globe-navigation-help { position: absolute; z-index: 5; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 2px; max-width: min(320px, calc(100% - 110px)); padding: 8px 10px; border: 1px solid rgba(223,199,143,.32); border-radius: 4px 10px 4px 10px; color: #d7e7df; background: rgba(14,47,48,.78); box-shadow: 0 8px 22px rgba(3,23,25,.2); backdrop-filter: blur(8px); pointer-events: none; }
 .globe-navigation-help strong { color: #fff1bd; font: 600 .73rem Georgia, serif; letter-spacing: .04em; }
