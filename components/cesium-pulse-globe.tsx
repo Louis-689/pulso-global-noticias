@@ -126,6 +126,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
           name: feature.properties.spanishName,
           polygon: {
             hierarchy: hierarchy(Cesium, polygon),
+            height: 0,
             material: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#df6844" : hasNews ? "#2d827d" : "#b89b68").withAlpha(feature.properties.code === selectedCountry ? 0.58 : hasNews ? 0.34 : 0.12),
             outline: true,
             outlineColor: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#fff0bd" : "#e4c989").withAlpha(0.72),
