@@ -183,7 +183,7 @@ export function derivePulse(input: PulseArticle[], options: { country?: string; 
   const negative = articles.filter((article) => article.sentiment < 0).sort((a, b) => a.sentiment - b.sentiment);
   const positiveTerms = articles.reduce((sum, article) => sum + article.positiveTerms.length, 0);
   const negativeTerms = articles.reduce((sum, article) => sum + article.negativeTerms.length, 0);
-  const located = articles.filter((article) => article.mentionedCountries.length > 0).length;
+  const located = articles.filter((article) => article.mentionedCountries.length > 0 || article.location).length;
   return {
     articles, points: [...points.values()].sort((a, b) => b.count - a.count),
     connections: [...connections.values()].sort((a, b) => b.weight - a.weight).slice(0, 24),

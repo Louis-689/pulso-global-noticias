@@ -77,7 +77,7 @@ async function cached(key: string, task: () => Promise<ProviderResult>, now: num
   const pending = inFlight.get(key);
   if (pending) return pending;
   starts = starts.filter((time) => time > now - 60000);
-  if (starts.length >= 12 || inFlight.size >= 4) throw new PulseBusyError();
+  if (starts.length >= 30 || inFlight.size >= 6) throw new PulseBusyError();
   starts.push(now);
   const promise = task().then((value) => {
     if (cache.size >= 64) cache.delete(cache.keys().next().value!);
@@ -124,12 +124,12 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const sources: PulseSource[] = [];
   const errors: string[] = [];
   const [gdelt, ...rssResults] = await Promise.allSettled([
-    boundedFetchText(urls.gdelt, "json", fetcher).then((text) => {
+    boundedFetchText(urls.gdelt, "json", fetcher, 3_500).then((text) => {
       const data: unknown = JSON.parse(text);
       if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
       return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
     }),
-    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher)
+    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher, 3_500)
       .then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" }), request.timespan, now))),
   ]);
   const gathered: PulseArticle[] = [];
@@ -201,15 +201,19 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
   const key = request.mode === "early" ? "early" : JSON.stringify(request);
   const result = await cached(key, () => request.mode === "early" ? loadEarly(now) : loadNews(request, now), now);
   let articles = filterTimeAndDedupe(result.articles, request.timespan, now);
-  if (request.mode === "early" && request.category !== "all") articles = articles.filter((article) => request.category === "science" || request.category === "technology" && article.kind !== "earthquake");
+  if (request.mode === "early" && request.category !== "all") {
+    articles = articles.filter((article) => request.category === "science"
+      ? article.kind === "earthquake" || article.kind === "preprint" || article.provider === "NASA"
+      : request.category === "technology" && article.provider === "arXiv");
+  }
   // Town-only titles can lack the country name. Search context never becomes map evidence.
-  const view = derivePulse(articles, { country: request.query ? undefined : request.country, query: request.mode === "early" ? request.query : undefined });
+  const view = derivePulse(articles, { country: request.query ? undefined : request.country, query: request.query || undefined });
   const sources = result.sources.map((source) => ({ ...source, count: view.articles.filter((article) => article.provider === source.name).length }));
   return {
     ...view, mode: request.mode, timespan: request.timespan, category: request.category, pointBasis: "mentionedCountries",
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
-    coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Disponibles en Panorama, Ciencia y Tecnología. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
+    coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Panorama reúne todas; Ciencia agrupa USGS, NASA y arXiv; Tecnología muestra arXiv. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
       : `Muestra combinada de hasta 120 titulares multilingües de GDELT y ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones regionales de Google News. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
   };
 }

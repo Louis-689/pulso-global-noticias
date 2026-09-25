@@ -5,9 +5,11 @@ Centro geoespacial de noticias públicas en tiempo casi real. Combina un globo 3
 ## Alcance y fuentes
 
 - Noticias: GDELT y Google News RSS, con deduplicación, filtros temporales y degradación controlada cuando un proveedor falla.
-- Señales tempranas: USGS, NASA y arXiv. Son indicios públicos, no información privada ni confirmaciones de hechos futuros.
+- Señales tempranas: USGS, GDACS, NASA y arXiv. Son indicios públicos, no información privada ni confirmaciones de hechos futuros.
 - Geografía: coincidencias explícitas de lugares en titulares y búsqueda GeoNames vía Open-Meteo; no se inventa cobertura local.
-- Predicción: escenarios exploratorios con supuestos editables. No predice conductas individuales ni presenta certeza.
+- Análisis: lecturas descriptivas de la muestra visible para formular hipótesis. No predice conductas individuales ni presenta certeza.
+
+La búsqueda geográfica usa el endpoint gratuito de Open-Meteo únicamente para despliegues privados/no comerciales. Antes de un lanzamiento comercial configura `OPEN_METEO_API_KEY` para usar el endpoint de cliente o sustituye el proveedor por uno con términos adecuados.
 
 ## Desarrollo
 

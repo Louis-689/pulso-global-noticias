@@ -9,8 +9,8 @@ const CACHE_LIMIT = 192;
 const MAX_BODY_BYTES = 180_000;
 const REQUEST_TIMEOUT = 8_000;
 const cache = new Map<string, { expires: number; data: PlacesResponse }>();
-let active: { key: string; promise: Promise<PlacesResponse> } | undefined;
-let lastStarted = 0;
+const active = new Map<string, Promise<PlacesResponse>>();
+const MAX_ACTIVE_SEARCHES = 4;
 let upstreamCooldownUntil = 0;
 
 const attribution = "Geografía: GeoNames, consultada mediante Open-Meteo.";
@@ -181,16 +181,16 @@ export async function GET(request: Request) {
   for (const [key, entry] of cache) if (entry.expires <= now) cache.delete(key);
   const cached = cache.get(cacheKey);
   if (cached) return reply({ ...cached.data, cached: true });
-  if (active?.key === cacheKey) {
-    try { return reply(await active.promise); }
+  const existing = active.get(cacheKey);
+  if (existing) {
+    try { return reply(await existing); }
     catch { return reply(payload(query, [], "El servicio geográfico no respondió. Vuelve a buscar en unos instantes."), 503); }
   }
-  if (active || now - lastStarted < 1_000 || now < upstreamCooldownUntil) {
+  if (active.size >= MAX_ACTIVE_SEARCHES || now < upstreamCooldownUntil) {
     return reply(payload(query, [], "Hay una consulta geográfica en curso. Espera unos segundos y vuelve a buscar."), 429, now < upstreamCooldownUntil ? 60 : 2);
   }
-  lastStarted = now;
   const promise = search(query, country, parent, level as PlaceLevel | "", id);
-  active = { key: cacheKey, promise };
+  active.set(cacheKey, promise);
   try {
     const data = await promise;
     if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
@@ -200,6 +200,6 @@ export async function GET(request: Request) {
     console.error("[places]", error instanceof Error ? error.message : "unknown-error");
     return reply(payload(query, [], "El servicio geográfico no está disponible. No se inventaron ubicaciones; inténtalo de nuevo."), 503);
   } finally {
-    if (active?.promise === promise) active = undefined;
+    if (active.get(cacheKey) === promise) active.delete(cacheKey);
   }
 }

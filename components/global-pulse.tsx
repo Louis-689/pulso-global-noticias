@@ -24,11 +24,11 @@ const CATEGORY_FOLDERS: Array<{ id: string; label: string; note: string; tone: s
   { id: "life", label: "Planeta y sociedad", note: "Clima, cultura y deportes", tone: "olive", categories: ["climate", "culture", "sports"] },
 ];
 const categoryLabel = (id: PulseCategory) => CATEGORIES.find(([value]) => value === id)?.[1] || id;
+const EARLY_CATEGORIES = new Set<PulseCategory>(["all", "science", "technology"]);
 const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "Última hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
 type FeedMode = "latest" | "signals" | "positive" | "negative" | "saved";
 type SortMode = "newest" | "coverage" | "signal";
 type ScenarioLens = "human" | "economy" | "science";
-type ScenarioHorizon = "24h" | "7d" | "30d";
 type MapMode = "realistic" | "illustrated" | "flat";
 type WebMcpContext = { registerTool: (tool: Record<string, unknown>, options?: { signal?: AbortSignal }) => void | Promise<void> };
 
@@ -55,12 +55,51 @@ function emptyResponse(mode: PulseMode, timespan: PulseTimespan, category: Pulse
   return { mode, timespan, category, pointBasis: "mentionedCountries", dataProvider: "Sin resultados disponibles", fetchedAt: new Date().toISOString(), partial: true, sources: [], errors: [message], coverageNote: message, articles: [], points: [], connections: [], rankings: { positive: [], negative: [] }, tension: null, stats: { total: 0, located: 0, unlocated: 0, positive: 0, negative: 0, neutral: 0, scored: 0 } };
 }
 const SAVED_ARCHIVE_KEY = "pulso-global-saved-articles-v2";
+const SAVED_KINDS = new Set<PulseArticle["kind"]>(["news", "earthquake", "preprint", "official"]);
+const SAVED_REVIEW_STATES = new Set<PulseArticle["reviewStatus"]>(["unknown", "preliminary", "reviewed", "not-peer-reviewed"]);
+const SAVED_TIMESTAMP_BASES = new Set<PulseArticle["timestampBasis"]>(["published", "observed", "event"]);
+function isSafeSavedUrl(value: unknown) {
+  if (typeof value !== "string" || value.length > 2_048) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch { return false; }
+}
+function isSavedCountry(value: unknown): value is PulseArticle["mentionedCountries"][number] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Partial<PulseArticle["mentionedCountries"][number]>;
+  return typeof item.code === "string" && /^[A-Z]{2}$/.test(item.code)
+    && typeof item.name === "string" && item.name.length <= 100
+    && typeof item.evidence === "string" && item.evidence.length <= 250
+    && typeof item.lat === "number" && Number.isFinite(item.lat) && item.lat >= -90 && item.lat <= 90
+    && typeof item.lng === "number" && Number.isFinite(item.lng) && item.lng >= -180 && item.lng <= 180;
+}
 function isSavedArticle(value: unknown): value is PulseArticle {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Partial<PulseArticle>;
-  return typeof item.id === "string" && typeof item.title === "string" && typeof item.url === "string"
-    && typeof item.seenDate === "string" && typeof item.provider === "string" && typeof item.kind === "string"
-    && Array.isArray(item.mentionedCountries) && Array.isArray(item.positiveTerms) && Array.isArray(item.negativeTerms);
+  const locationValid = item.location === undefined || (typeof item.location === "object" && item.location !== null
+    && typeof item.location.lat === "number" && Number.isFinite(item.location.lat) && item.location.lat >= -90 && item.location.lat <= 90
+    && typeof item.location.lng === "number" && Number.isFinite(item.location.lng) && item.location.lng >= -180 && item.location.lng <= 180
+    && typeof item.location.label === "string" && item.location.label.length <= 250);
+  return typeof item.id === "string" && item.id.length <= 150
+    && typeof item.title === "string" && item.title.length <= 500
+    && isSafeSavedUrl(item.url)
+    && typeof item.domain === "string" && item.domain.length <= 255
+    && typeof item.sourceName === "string" && item.sourceName.length <= 150
+    && typeof item.destinationHost === "string" && item.destinationHost.length <= 255
+    && typeof item.sourceCountry === "string" && item.sourceCountry.length <= 100
+    && typeof item.language === "string" && item.language.length <= 100
+    && typeof item.seenDate === "string" && Number.isFinite(Date.parse(item.seenDate))
+    && (item.publishedAt === null || typeof item.publishedAt === "string" && Number.isFinite(Date.parse(item.publishedAt)))
+    && typeof item.provider === "string" && item.provider.length <= 150
+    && SAVED_KINDS.has(item.kind as PulseArticle["kind"])
+    && SAVED_REVIEW_STATES.has(item.reviewStatus as PulseArticle["reviewStatus"])
+    && SAVED_TIMESTAMP_BASES.has(item.timestampBasis as PulseArticle["timestampBasis"])
+    && Array.isArray(item.mentionedCountries) && item.mentionedCountries.length <= 50 && item.mentionedCountries.every(isSavedCountry)
+    && typeof item.sentiment === "number" && Number.isFinite(item.sentiment) && item.sentiment >= -1 && item.sentiment <= 1
+    && Array.isArray(item.positiveTerms) && item.positiveTerms.length <= 100 && item.positiveTerms.every((term) => typeof term === "string" && term.length <= 100)
+    && Array.isArray(item.negativeTerms) && item.negativeTerms.length <= 100 && item.negativeTerms.every((term) => typeof term === "string" && term.length <= 100)
+    && locationValid;
 }
 
 export function GlobalPulse() {
@@ -95,7 +134,6 @@ export function GlobalPulse() {
   const [resetKey, setResetKey] = useState(0);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   const [scenarioLens, setScenarioLens] = useState<ScenarioLens>("human");
-  const [scenarioHorizon, setScenarioHorizon] = useState<ScenarioHorizon>("24h");
   const [methodOpen, setMethodOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [openFolder, setOpenFolder] = useState("world");
@@ -133,8 +171,8 @@ export function GlobalPulse() {
 
   useEffect(() => {
     const controller = new AbortController();
-    queueMicrotask(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal, false); });
-    return () => controller.abort();
+    const timer = window.setTimeout(() => { if (!controller.signal.aborted) void fetchPulse(controller.signal, false); }, 180);
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [fetchPulse]);
   useEffect(() => {
     if (!liveMode) return;
@@ -187,7 +225,10 @@ export function GlobalPulse() {
         const value = input as Record<string, unknown>;
         if (typeof value.category === "string" && CATEGORIES.some(([id]) => id === value.category)) setCategory(value.category as PulseCategory);
         if (typeof value.timespan === "string" && WINDOWS.some(([id]) => id === value.timespan)) setTimespan(value.timespan as PulseTimespan);
-        if (value.mode === "news" || value.mode === "early") setMode(value.mode);
+        if (value.mode === "news" || value.mode === "early") {
+          setMode(value.mode);
+          if (value.mode === "early") setCategory((current) => EARLY_CATEGORIES.has(current) ? current : "all");
+        }
         if (typeof value.country === "string" && /^[A-Z]{2}$/.test(value.country)) { setCountry(value.country); setSelectedPlace(null); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); }
         if (typeof value.query === "string" && value.query.length <= 100) { setSelectedPlace(null); setSearchDraft(value.query); setQuery(value.query.trim()); }
         return { accepted: true };
@@ -262,7 +303,17 @@ export function GlobalPulse() {
   }
   function cancelPlaceSearch() { placeRequestRef.current += 1; placeAbortRef.current?.abort(); placeAbortRef.current = null; setPlaceLoading(false); }
   function choosePlace(place: PlaceResult) { cancelPlaceSearch(); setSelectedPlace(place); setCountry(place.countryCode); setPlaceDraft(place.name); setPlaceResults([]); setSearchDraft(place.name); setQuery(place.name); setMode("news"); }
-  function clearLocation() { cancelPlaceSearch(); setSelectedPlace(null); setCountry(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); setQuery(""); setSearchDraft(""); setResetKey((value) => value + 1); }
+  function clearLocation() {
+    cancelPlaceSearch();
+    setSelectedPlace(null); setCountry(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage("");
+    setQuery(""); setSearchDraft(""); setCategory("all"); setMode("news"); setFeedMode("latest"); setOpenFolder("world");
+    setResetKey((value) => value + 1);
+  }
+  function selectMode(nextMode: PulseMode) {
+    if (nextMode === "early" && !EARLY_CATEGORIES.has(category)) setCategory("all");
+    setMode(nextMode);
+  }
+  function centerWorld() { selectCountry(""); setResetKey((value) => value + 1); }
   function selectCountry(code: string) { cancelPlaceSearch(); setSelectedPlace(null); setCountry(code); setQuery(""); setSearchDraft(""); setPlaceDraft(""); setPlaceResults([]); setPlaceMessage(""); }
   function toggleSaved(article: PulseArticle) {
     const removing = saved.includes(article.id);
@@ -290,8 +341,8 @@ export function GlobalPulse() {
 
     <aside className="side-rail" aria-label="Navegación principal">
       <div className="rail-section"><span className="eyebrow">VISTA</span>
-        <button className={mode === "news" ? "rail-action active" : "rail-action"} onClick={() => setMode("news")}><Newspaper /><span>Actualidad</span></button>
-        <button className={mode === "early" ? "rail-action active amber" : "rail-action"} onClick={() => setMode("early")}><Sparkles /><span>Señales tempranas</span></button>
+        <button className={mode === "news" ? "rail-action active" : "rail-action"} onClick={() => selectMode("news")}><Newspaper /><span>Actualidad</span></button>
+        <button className={mode === "early" ? "rail-action active amber" : "rail-action"} onClick={() => selectMode("early")}><Sparkles /><span>Señales tempranas</span></button>
         <button className="rail-action" onClick={() => setScenarioOpen(true)}><Bot /><span>Escenarios</span></button>
         <button className={feedMode === "saved" ? "rail-action active" : "rail-action"} onClick={() => setFeedMode(feedMode === "saved" ? "latest" : "saved")}><Bookmark /><span>Guardadas <b>{saved.length}</b></span></button>
       </div>
@@ -302,7 +353,7 @@ export function GlobalPulse() {
           <button className="folder-cover" aria-expanded={isOpen} aria-controls={`folder-${folder.id}`} onClick={() => setOpenFolder(isOpen ? "" : folder.id)}>
             <span className="folder-emblem">{isOpen ? <FolderOpen /> : <Folder />}</span><span><strong>{folder.label}</strong><small>{folder.note}</small></span>{isOpen ? <ChevronDown /> : <ChevronRight />}
           </button>
-          <div className="folder-files" id={`folder-${folder.id}`} aria-hidden={!isOpen}><div>{folder.categories.map((id) => <button key={id} tabIndex={isOpen ? 0 : -1} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{categoryLabel(id)}<ChevronRight /></button>)}</div></div>
+          <div className="folder-files" id={`folder-${folder.id}`} aria-hidden={!isOpen}><div>{folder.categories.map((id) => { const unavailable = mode === "early" && !EARLY_CATEGORIES.has(id); return <button key={id} disabled={unavailable} title={unavailable ? "Disponible en Actualidad; las señales tempranas actuales cubren Panorama, Ciencia y Tecnología." : undefined} tabIndex={isOpen ? 0 : -1} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{categoryLabel(id)}<ChevronRight /></button>; })}</div></div>
         </div>;
       })}</div>
       <button className="method-link" onClick={() => setMethodOpen(true)}><Info />Cómo se calcula</button>
@@ -312,19 +363,20 @@ export function GlobalPulse() {
       <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos multilingües, situados solo cuando el lugar aparece explícitamente en la fuente."}</p><button className="source-ribbon" onClick={() => setSourcesOpen(true)} aria-label="Ver fuentes y cobertura"><ShieldCheck /><span>Fuentes públicas trazables</span>{data?.sources.slice(0, 4).map((source) => <span className={`source-seal ${source.status}`} key={source.name}>{source.name}<i>{source.count}</i></span>)}<ChevronRight className="source-arrow" /></button></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
       {error && <div className="refresh-warning" role="alert"><AlertTriangle /><span><strong>La actualización falló.</strong> {data?.articles.length ? "Conservamos la última muestra visible para no interrumpir tu análisis." : error}</span><button onClick={() => void fetchPulse(undefined, true)} disabled={loading}>Reintentar</button></div>}
       <div className="filter-bar">
-        <label className="mobile-topic"><span>Tema</span><select value={category} onChange={(event) => setCategory(event.target.value as PulseCategory)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+        <label className="mobile-topic"><span>Tema</span><select value={category} onChange={(event) => setCategory(event.target.value as PulseCategory)}>{CATEGORIES.map(([id, label]) => <option key={id} value={id} disabled={mode === "early" && !EARLY_CATEGORIES.has(id)}>{label}</option>)}</select></label>
         <label><span>País</span><select value={country} onChange={(event) => selectCountry(event.target.value)}><option value="">Todo el mundo</option>{countries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
         <label><span>Ventana</span><select value={timespan} onChange={(event) => setTimespan(event.target.value as PulseTimespan)}>{WINDOWS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <form className="place-search" onSubmit={searchPlace}><label htmlFor="place-query">Región, ciudad o pueblo</label><div><MapPin /><input id="place-query" value={placeDraft} onChange={(event) => setPlaceDraft(event.target.value)} placeholder={country ? `Buscar dentro de ${countryName}` : "Ej. Písac, Cusco"} /><button disabled={placeLoading}>{placeLoading ? <Loader2 className="spin" /> : "Ir"}</button></div></form>
-        <div className="view-switch" aria-label="Vista del mapa"><button className={mapMode === "realistic" ? "active" : ""} onClick={() => setMapMode("realistic")}>Realista</button><button className={mapMode === "illustrated" ? "active" : ""} onClick={() => setMapMode("illustrated")}>Arte</button><button className={mapMode === "flat" ? "active" : ""} onClick={() => setMapMode("flat")}>2D</button></div>
+        <div className="view-switch" aria-label="Vista del mapa"><button aria-pressed={mapMode === "realistic"} className={mapMode === "realistic" ? "active" : ""} onClick={() => setMapMode("realistic")}>Realista</button><button aria-pressed={mapMode === "illustrated"} className={mapMode === "illustrated" ? "active" : ""} onClick={() => setMapMode("illustrated")}>Arte</button><button aria-pressed={mapMode === "flat"} className={mapMode === "flat" ? "active" : ""} onClick={() => setMapMode("flat")}>2D</button></div>
       </div>
       {(placeResults.length > 0 || placeMessage) && <div className="place-results" aria-live="polite">{placeResults.map((place) => <button key={place.id} onClick={() => choosePlace(place)}><MapPin /><span><strong>{place.name}</strong><small>{place.displayName} · {place.type === "region" ? "región" : place.type === "city" ? "ciudad" : "localidad"}</small></span><ArrowRight /></button>)}{placeMessage && <p>{placeMessage} <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">Geografía: GeoNames/Open-Meteo</a></p>}</div>}
 
       <div className={`content-grid${mapExpanded ? " map-expanded" : ""}`}>
         <section className="map-panel" aria-label="Mapa mundial de noticias">
-          <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button><button className={mapExpanded ? "active" : ""} onClick={() => setMapExpanded((value) => !value)} aria-label={mapExpanded ? "Salir de la vista orbital amplia" : "Ampliar el planeta"} title={mapExpanded ? "Salir de vista amplia (Esc)" : "Vista orbital amplia"}>{mapExpanded ? <Minimize2 /> : <Maximize2 />}<span>{mapExpanded ? "Reducir" : "Ampliar"}</span></button></div></div>
+          <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={centerWorld} aria-label="Volver a la vista mundial"><Globe2 />Mundo</button><button className={mapExpanded ? "active" : ""} onClick={() => setMapExpanded((value) => !value)} aria-label={mapExpanded ? "Salir de la vista orbital amplia" : "Ampliar el planeta"} title={mapExpanded ? "Salir de vista amplia (Esc)" : "Vista orbital amplia"}>{mapExpanded ? <Minimize2 /> : <Maximize2 />}<span>{mapExpanded ? "Reducir" : "Ampliar"}</span></button></div></div>
           <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : mapMode === "realistic" ? <CesiumPulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} showCountryAreas={showCountryAreas} showCountrySignals={showCountrySignals} showExactSignals={showExactSignals} resetKey={resetKey} /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={mapMode === "flat"} resetKey={resetKey} live={liveMode} />}{mapMode === "realistic" && <div className={`map-layer-dock${layerPanelOpen ? " open" : ""}`}><button className="layer-master" onClick={() => setLayerPanelOpen((value) => !value)} aria-expanded={layerPanelOpen} aria-controls="operational-layers"><Layers3 /><span>Capas</span><b>{[showCountryAreas, showCountrySignals, showExactSignals, showConnections].filter(Boolean).length}</b></button>{layerPanelOpen && <div id="operational-layers" className="layer-menu"><span>LECTURA OPERATIVA</span><button aria-pressed={showCountryAreas} onClick={() => setShowCountryAreas((value) => !value)}><i />Territorios</button><button aria-pressed={showCountrySignals} onClick={() => setShowCountrySignals((value) => !value)}><i />Pulso por país</button><button aria-pressed={showExactSignals} onClick={() => setShowExactSignals((value) => !value)}><i />Ubicación exacta</button><button aria-pressed={showConnections} onClick={() => setShowConnections((value) => !value)}><i />Conexiones</button><small>Solo capas sustentadas por la muestra.</small></div>}</div>}<div className="map-legend">{selectedPlace && <span><i className="dot selected" /> lugar seleccionado</span>}<span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
-          <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>por mención</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
+          {showConnections && !!data?.connections.length && <div className="connection-access" aria-label="Conexiones documentadas">{data.connections.slice(0, 6).map((connection) => <button key={`${connection.sourceId}-${connection.targetId}`} onClick={() => setSelectedConnection(connection)}><Link2 /><span>{connection.label}</span><b>{connection.weight}</b></button>)}</div>}
+          <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>mención o coordenada</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
         </section>
 
         <aside className="news-panel" aria-label="Noticias de la consulta">
@@ -336,11 +388,11 @@ export function GlobalPulse() {
       </div>
     </section>
 
-    <Sheet open={!!selectedArticle} onOpenChange={(open) => !open && setSelectedArticle(null)}><SheetContent className="story-sheet">{selectedArticle && <><SheetHeader className="story-sheet-head"><div className="detail-badges"><span>{kindLabel(selectedArticle)}</span><span>{selectedArticle.reviewStatus === "not-peer-reviewed" ? "Sin revisión por pares" : selectedArticle.reviewStatus === "preliminary" ? "Preliminar" : selectedArticle.reviewStatus === "reviewed" ? "Revisado" : "Estado no indicado"}</span></div><SheetTitle>{selectedArticle.title}</SheetTitle><SheetDescription>{sourceLabel(selectedArticle)} · {relativeTime(selectedArticle.publishedAt || selectedArticle.seenDate)}</SheetDescription></SheetHeader><div className="story-detail"><div className="source-card"><Database /><div><span>Origen y hora</span><strong>{selectedArticle.provider}</strong><small>{selectedArticle.timestampBasis === "published" ? "Publicación" : selectedArticle.timestampBasis === "event" ? "Evento" : "Observación"}: {new Date(selectedArticle.seenDate).toLocaleString("es-PE")}</small></div></div><div className="evidence-card"><ShieldCheck /><div><span>Nivel de evidencia</span><strong>{evidenceSummary(selectedArticle)[0]}</strong><small>{evidenceSummary(selectedArticle)[1]}</small></div></div><section><h3>Ubicación sustentada</h3>{selectedArticle.location && <p><MapPin />{selectedArticle.location.label}: coordenadas publicadas por la fuente.</p>}{selectedArticle.mentionedCountries.length ? <ul>{selectedArticle.mentionedCountries.map((item) => <li key={item.code}><strong>{item.name}</strong><span>Evidencia en el titular: “{item.evidence}”</span></li>)}</ul> : <p>El titular no identifica un país de forma inequívoca; no se coloca en el mapa.</p>}</section><section><h3>Lectura de tono</h3><p>{selectedArticle.positiveTerms.length || selectedArticle.negativeTerms.length ? `Coincidencias: ${[...selectedArticle.positiveTerms, ...selectedArticle.negativeTerms].join(", ")}.` : "No se detectaron términos del vocabulario exploratorio."} Esto describe palabras, no veracidad, intención ni sentimiento humano.</p></section><div className="detail-actions"><button onClick={() => toggleSaved(selectedArticle)}>{saved.includes(selectedArticle.id) ? <BookmarkCheck /> : <Bookmark />}{saved.includes(selectedArticle.id) ? "Guardada" : "Guardar"}</button><a href={selectedArticle.url} target="_blank" rel="noopener noreferrer">Abrir fuente original <ExternalLink /></a></div></div></>}</SheetContent></Sheet>
+    <Sheet open={!!selectedArticle} onOpenChange={(open) => !open && setSelectedArticle(null)}><SheetContent className="story-sheet">{selectedArticle && <><SheetHeader className="story-sheet-head"><div className="detail-badges"><span>{kindLabel(selectedArticle)}</span><span>{selectedArticle.reviewStatus === "not-peer-reviewed" ? "Sin revisión por pares" : selectedArticle.reviewStatus === "preliminary" ? "Preliminar" : selectedArticle.reviewStatus === "reviewed" ? "Revisado" : "Estado no indicado"}</span></div><SheetTitle>{selectedArticle.title}</SheetTitle><SheetDescription>{sourceLabel(selectedArticle)} · {relativeTime(selectedArticle.publishedAt || selectedArticle.seenDate)}</SheetDescription></SheetHeader><div className="story-detail"><div className="source-card"><Database /><div><span>Origen y hora</span><strong>{selectedArticle.provider}</strong><small>{selectedArticle.timestampBasis === "published" ? "Publicación" : selectedArticle.timestampBasis === "event" ? "Evento" : "Observación"}: {new Date(selectedArticle.seenDate).toLocaleString("es-PE")}</small></div></div><div className="evidence-card"><ShieldCheck /><div><span>Nivel de evidencia</span><strong>{evidenceSummary(selectedArticle)[0]}</strong><small>{evidenceSummary(selectedArticle)[1]}</small></div></div><section><h3>Ubicación sustentada</h3>{selectedArticle.location && <p><MapPin />{selectedArticle.location.label}: coordenadas publicadas por la fuente.</p>}{selectedArticle.mentionedCountries.length ? <ul>{selectedArticle.mentionedCountries.map((item) => <li key={item.code}><strong>{item.name}</strong><span>Evidencia en el titular: “{item.evidence}”</span></li>)}</ul> : <p>El titular no identifica un país de forma inequívoca; no se coloca en el mapa.</p>}</section><section><h3>Lectura de tono</h3><p>{selectedArticle.positiveTerms.length || selectedArticle.negativeTerms.length ? `Coincidencias: ${[...selectedArticle.positiveTerms, ...selectedArticle.negativeTerms].join(", ")}.` : "No se detectaron términos del vocabulario exploratorio."} Esto describe palabras, no veracidad, intención ni sentimiento humano.</p></section><div className="detail-actions"><button onClick={() => toggleSaved(selectedArticle)}>{saved.includes(selectedArticle.id) ? <BookmarkCheck /> : <Bookmark />}{saved.includes(selectedArticle.id) ? "Guardada" : "Guardar"}</button><a href={selectedArticle.url}>Abrir fuente original <ExternalLink /></a></div></div></>}</SheetContent></Sheet>
 
     <Dialog open={!!selectedConnection} onOpenChange={(open) => !open && setSelectedConnection(null)}><DialogContent className="evidence-dialog"><DialogHeader><DialogTitle>Conexión documentada</DialogTitle><DialogDescription>{selectedConnection?.label}. La línea existe porque los países aparecen en el mismo titular; no implica causalidad.</DialogDescription></DialogHeader><div className="evidence-list">{connectionArticles.map((article) => <button key={article.id} onClick={() => { setSelectedConnection(null); setSelectedArticle(article); }}><Link2 /><span>{article.title}<small>{sourceLabel(article)}</small></span><ChevronRight /></button>)}</div></DialogContent></Dialog>
     <Dialog open={sourcesOpen} onOpenChange={setSourcesOpen}><DialogContent className="sources-dialog"><DialogHeader><span className="modal-kicker"><ShieldCheck /> TRAZABILIDAD</span><DialogTitle>Fuentes y estado de cobertura</DialogTitle><DialogDescription>Estos son índices, ediciones regionales y canales públicos consultados para la vista actual. Un estado correcto significa que respondió, no que cada afirmación esté verificada.</DialogDescription></DialogHeader><div className="sources-list">{data?.sources.map((source) => <article key={source.name}><span className={`source-status ${source.status}`} /> <div><strong>{source.name}</strong><p>{source.note || "Sin nota adicional."}</p></div><span className="source-count">{source.count} en muestra</span><a href={source.url} target="_blank" rel="noopener noreferrer" aria-label={`Abrir sitio de ${source.name}`}><ExternalLink /></a></article>)}{!data?.sources.length && <div className="empty-source"><Loader2 className={loading ? "spin" : ""} />{loading ? "Consultando fuentes…" : "No hay fuentes disponibles en esta vista."}</div>}</div><div className="scenario-rule"><Info /><p><strong>Límite:</strong> Pulso Global organiza una muestra reciente y enlaza su origen. No sustituye la lectura de la fuente, la corroboración independiente ni una base exhaustiva de noticias.</p></div></DialogContent></Dialog>
-    <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Horizontes de comportamiento</DialogTitle><DialogDescription>Explora hipótesis humanas, económicas y científicas a partir de la muestra visible. No predice decisiones individuales ni garantiza acontecimientos.</DialogDescription></DialogHeader><div className="scenario-toolbar"><div role="tablist" aria-label="Lente del escenario">{(["human", "economy", "science"] as ScenarioLens[]).map((lens) => <button key={lens} role="tab" aria-selected={scenarioLens === lens} className={scenarioLens === lens ? "active" : ""} onClick={() => setScenarioLens(lens)}>{lens === "human" ? "Humano" : lens === "economy" ? "Económico" : "Científico"}</button>)}</div><label>Horizonte<select value={scenarioHorizon} onChange={(event) => setScenarioHorizon(event.target.value as ScenarioHorizon)}><option value="24h">24 horas</option><option value="7d">7 días</option><option value="30d">30 días</option></select></label></div><div className="scenario-status"><span>EVIDENCIA {scenarioModel.evidence.toUpperCase()}</span><strong>{scenarioModel.total} registros · horizonte {scenarioHorizon === "24h" ? "24 horas" : scenarioHorizon === "7d" ? "7 días" : "30 días"}</strong><p>Lectura direccional: si la composición de fuentes se mantiene, estos indicadores describen la continuidad del pulso actual; cuanto mayor sea el horizonte, mayor es la incertidumbre.</p></div><div className="scenario-grid">{scenarioModel.cards.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> una predicción calibrada requiere series históricas, variables externas, evaluación contra datos futuros y márgenes de error. Aquí se muestran escenarios trazables, no profecías.</p></div></DialogContent></Dialog>
+    <Dialog open={scenarioOpen} onOpenChange={setScenarioOpen}><DialogContent className="scenario-dialog"><DialogHeader><span className="modal-kicker"><Bot /> LABORATORIO DE ESCENARIOS</span><DialogTitle>Lecturas de comportamiento</DialogTitle><DialogDescription>Explora hipótesis humanas, económicas y científicas a partir de la muestra visible. No predice decisiones individuales ni garantiza acontecimientos.</DialogDescription></DialogHeader><div className="scenario-toolbar"><div role="tablist" aria-label="Lente del escenario">{(["human", "economy", "science"] as ScenarioLens[]).map((lens) => <button key={lens} role="tab" aria-selected={scenarioLens === lens} className={scenarioLens === lens ? "active" : ""} onClick={() => setScenarioLens(lens)}>{lens === "human" ? "Humano" : lens === "economy" ? "Económico" : "Científico"}</button>)}</div></div><div className="scenario-status"><span>EVIDENCIA {scenarioModel.evidence.toUpperCase()}</span><strong>{scenarioModel.total} registros · instantánea de la ventana seleccionada</strong><p>Lectura descriptiva de la muestra actual. Para estimar un futuro se requieren series históricas, variables externas y validación contra resultados posteriores.</p></div><div className="scenario-grid">{scenarioModel.cards.map((item) => <article key={item.title}><item.icon /><span>{item.title}</span><strong>{item.value}</strong><p>{item.text}</p></article>)}</div><div className="scenario-rule"><AlertTriangle /><p><strong>Uso responsable:</strong> estos indicadores sirven para formular hipótesis trazables; no son pronósticos ni profecías.</p></div></DialogContent></Dialog>
     <Dialog open={methodOpen} onOpenChange={setMethodOpen}><DialogContent className="method-dialog"><DialogHeader><span className="modal-kicker"><CheckCircle2 /> MISIÓN Y MÉTODO</span><DialogTitle>Un atlas vivo, no un oráculo</DialogTitle><DialogDescription>Pulso Global organiza evidencia pública reciente desde el mundo hasta la localidad. Nunca convierte una señal en certeza ni promete acceso a información privada.</DialogDescription></DialogHeader><div className="mission-seal"><Globe2 /><p><strong>Misión</strong> Hacer comprensible el pulso humano, económico, científico y ambiental con origen, tiempo, geografía e incertidumbre visibles.</p></div><div className="method-steps"><div><b>01</b><p><strong>Recoge</strong> titulares, documentos oficiales y señales públicas con hora verificable.</p></div><div><b>02</b><p><strong>Contrasta el estado</strong> de cada origen y distingue noticia, documento, evento y prepublicación.</p></div><div><b>03</b><p><strong>Ubica</strong> solo países nombrados o coordenadas entregadas por la fuente.</p></div><div><b>04</b><p><strong>Ordena</strong> por tiempo, alcance o intensidad lexical sin fabricar relevancia.</p></div><div><b>05</b><p><strong>Relaciona</strong> países co-mencionados y conserva la evidencia que origina cada conexión.</p></div><div><b>06</b><p><strong>Expone límites</strong>: “sin dato en esta muestra” nunca significa “no ocurrió”.</p></div></div></DialogContent></Dialog>
   </main>;
 }

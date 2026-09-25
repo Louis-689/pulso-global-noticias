@@ -56,16 +56,17 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     if (!host) return;
     let cancelled = false;
     let runtime: Runtime | null = null;
+    let viewer: CesiumViewer | null = null;
     void (async () => {
       try {
         (window as Window & { CESIUM_BASE_URL?: string }).CESIUM_BASE_URL = "/cesium/";
         const Cesium = await import("cesium");
         if (cancelled) return;
-        const viewer = new Cesium.Viewer(host, {
+        viewer = new Cesium.Viewer(host, {
           animation: false, baseLayer: false, baseLayerPicker: false, fullscreenButton: false,
           geocoder: false, homeButton: false, infoBox: false, navigationHelpButton: false,
           sceneModePicker: false, selectionIndicator: false, timeline: false, scene3DOnly: true,
-          skyBox: false, shouldAnimate: false,
+          skyBox: false, shouldAnimate: false, requestRenderMode: true, maximumRenderTimeChange: Number.POSITIVE_INFINITY,
         });
         viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#173e48");
         viewer.scene.globe.enableLighting = false;
@@ -80,7 +81,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
         const targets = new Map<string, () => void>();
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         handler.setInputAction((movement: { position: import("cesium").Cartesian2 }) => {
-          const picked = viewer.scene.pick(movement.position) as { id?: { id?: string } } | undefined;
+          const picked = viewer?.scene.pick(movement.position) as { id?: { id?: string } } | undefined;
           const id = picked?.id?.id;
           if (id) targets.get(id)?.();
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
@@ -92,17 +93,18 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
         }
         setReady(true);
       } catch (error) {
+        if (cancelled) return;
+        if (viewer && !viewer.isDestroyed()) viewer.destroy();
         console.error("[cesium]", error instanceof Error ? error.message : "initialization-failed");
         setFailed(true);
       }
     })();
     return () => {
       cancelled = true;
-      setReady(false);
       if (runtime) {
         runtime.handler.destroy();
         if (!runtime.viewer.isDestroyed()) runtime.viewer.destroy();
-      }
+      } else if (viewer && !viewer.isDestroyed()) viewer.destroy();
       runtimeRef.current = null;
     };
   }, []);
