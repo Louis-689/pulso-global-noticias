@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Folder, FolderOpen, Globe2, Info, Landmark, Link2, Loader2, MapPin, Network, Newspaper, Pause, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles, TrendingUp, Volume2, X } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, Bookmark, BookmarkCheck, Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight, Clock3, Compass, Database, ExternalLink, FlaskConical, Folder, FolderOpen, Globe2, Info, Landmark, Link2, Loader2, MapPin, Maximize2, Minimize2, Network, Newspaper, Pause, Radio, RefreshCw, Search, ShieldCheck, SlidersHorizontal, Sparkles, TrendingUp, Volume2, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { countries } from "@/lib/pulse-geography";
@@ -85,6 +85,7 @@ export function GlobalPulse() {
   const [liveMode, setLiveMode] = useState(true);
   const [showConnections, setShowConnections] = useState(false);
   const [flatMap, setFlatMap] = useState(false);
+  const [mapExpanded, setMapExpanded] = useState(false);
   const [resetKey, setResetKey] = useState(0);
   const [scenarioOpen, setScenarioOpen] = useState(false);
   const [scenarioLens, setScenarioLens] = useState<ScenarioLens>("human");
@@ -156,6 +157,12 @@ export function GlobalPulse() {
     const shortcut = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); } };
     window.addEventListener("keydown", shortcut); return () => window.removeEventListener("keydown", shortcut);
   }, []);
+  useEffect(() => {
+    if (!mapExpanded) return;
+    const closeExpandedMap = (event: KeyboardEvent) => { if (event.key === "Escape") setMapExpanded(false); };
+    window.addEventListener("keydown", closeExpandedMap);
+    return () => window.removeEventListener("keydown", closeExpandedMap);
+  }, [mapExpanded]);
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   useEffect(() => {
@@ -295,7 +302,7 @@ export function GlobalPulse() {
       <button className="method-link" onClick={() => setMethodOpen(true)}><Info />Cómo se calcula</button>
     </aside>
 
-    <section className="workspace">
+    <section className={`workspace${mapExpanded ? " map-focus" : ""}`}>
       <div className="workspace-heading"><div><div className="breadcrumb"><span>Mundo</span>{countryName && <><ChevronRight /><span>{countryName}</span></>}{selectedPlace && <><ChevronRight /><strong>{selectedPlace.name}</strong></>}</div><h1>{title}</h1><p>{mode === "early" ? "Eventos oficiales y publicaciones recientes; revisa su estado antes de interpretarlos." : "Titulares públicos multilingües, situados solo cuando el lugar aparece explícitamente en la fuente."}</p><button className="source-ribbon" onClick={() => setSourcesOpen(true)} aria-label="Ver fuentes y cobertura"><ShieldCheck /><span>Fuentes públicas trazables</span>{data?.sources.slice(0, 4).map((source) => <span className={`source-seal ${source.status}`} key={source.name}>{source.name}<i>{source.count}</i></span>)}<ChevronRight className="source-arrow" /></button></div><div className="sync-state" aria-live="polite"><span className={loading ? "sync-dot busy" : error || data?.partial ? "sync-dot warning" : "sync-dot"} /><div><strong>{loading ? "Actualizando" : error ? "Con incidencia" : data?.partial ? "Cobertura parcial" : "Consulta actualizada"}</strong><small>{data ? new Date(data.fetchedAt).toLocaleString("es-PE", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" }) : "Conectando fuentes"}</small></div></div></div>
       {error && <div className="refresh-warning" role="alert"><AlertTriangle /><span><strong>La actualización falló.</strong> {data?.articles.length ? "Conservamos la última muestra visible para no interrumpir tu análisis." : error}</span><button onClick={() => void fetchPulse(undefined, true)} disabled={loading}>Reintentar</button></div>}
       <div className="filter-bar">
@@ -307,9 +314,9 @@ export function GlobalPulse() {
       </div>
       {(placeResults.length > 0 || placeMessage) && <div className="place-results" aria-live="polite">{placeResults.map((place) => <button key={place.id} onClick={() => choosePlace(place)}><MapPin /><span><strong>{place.name}</strong><small>{place.displayName} · {place.type === "region" ? "región" : place.type === "city" ? "ciudad" : "localidad"}</small></span><ArrowRight /></button>)}{placeMessage && <p>{placeMessage} <a href="https://www.geonames.org/" target="_blank" rel="noreferrer">Geografía: GeoNames/Open-Meteo</a></p>}</div>}
 
-      <div className="content-grid">
+      <div className={`content-grid${mapExpanded ? " map-expanded" : ""}`}>
         <section className="map-panel" aria-label="Mapa mundial de noticias">
-          <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button></div></div>
+          <div className="map-topline"><div><span className="map-kicker"><Compass /> OJO GLOBAL</span><strong>{data?.points.length ?? 0} países con menciones explícitas</strong></div><div className="map-toggles"><button className={showConnections ? "active" : ""} onClick={() => setShowConnections((value) => !value)}><Network />Conexiones <b>{data?.connections.length ?? 0}</b></button><button onClick={() => setResetKey((value) => value + 1)}><Compass />Centrar</button><button className={mapExpanded ? "active" : ""} onClick={() => setMapExpanded((value) => !value)} aria-label={mapExpanded ? "Salir de la vista orbital amplia" : "Ampliar el planeta"} title={mapExpanded ? "Salir de vista amplia (Esc)" : "Vista orbital amplia"}>{mapExpanded ? <Minimize2 /> : <Maximize2 />}<span>{mapExpanded ? "Reducir" : "Ampliar"}</span></button></div></div>
           <div className="globe-frame">{loading && !data ? <MapLoading label="Consultando fuentes públicas…" /> : <PulseGlobe points={data?.points ?? []} connections={data?.connections ?? []} articles={data?.articles ?? []} selectedCountry={country} selectedPlace={selectedPlace} onSelectCountry={selectCountry} onSelectArticle={setSelectedArticle} onSelectConnection={setSelectedConnection} showConnections={showConnections} flat={flatMap} resetKey={resetKey} live={liveMode} />}<div className="map-legend">{selectedPlace && <span><i className="dot selected" /> lugar seleccionado</span>}<span><i className="dot exact" /> coordenada publicada</span><span><i className="dot country" /> centro aproximado de país</span></div></div>
           <div className="metric-strip"><div><span>Muestra</span><strong>{data?.stats.total ?? 0}</strong><small>registros</small></div><div><span>Geolocalizados</span><strong>{data?.stats.located ?? 0}</strong><small>por mención</small></div><div><span>Sin ubicar</span><strong>{data?.stats.unlocated ?? 0}</strong><small>no se inventan</small></div><div><span>Tensión lexical</span><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><small>{data?.tension == null ? "base insuficiente" : "muestra actual"}</small></div></div>
         </section>

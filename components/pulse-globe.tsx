@@ -50,7 +50,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
   const flatFocusKey = `${resetKey}:${selectedPlace?.lat ?? ""}:${selectedPlace?.lng ?? ""}:${selectedCountry}`;
   const defaultFlatZoom = selectedPlace ? 3.4 : selectedCountry ? 1.9 : 1;
   const flatZoom = flatZoomState.key === flatFocusKey ? flatZoomState.value : defaultFlatZoom;
-  const material = useMemo(() => new MeshPhongMaterial({ color: "#4b9297", emissive: "#123d42", specular: "#f1dfac", shininess: 9 }), []);
+  const material = useMemo(() => new MeshPhongMaterial({ color: "#397f8a", emissive: "#102f38", specular: "#f4d69a", shininess: 18 }), []);
   const useFlat = flat || webglFailed;
   const counts = useMemo(() => new Map(points.map((point) => [point.id, point.count])), [points]);
   const mapPoints = useMemo<MapPoint[]>(() => [
@@ -87,7 +87,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
 
   useEffect(() => {
     if (!ready || useFlat) return;
-    globeRef.current?.pointOfView(selectedPlace ? { lat: selectedPlace.lat, lng: selectedPlace.lng, altitude: 0.48 } : country ? { lat: country.lat, lng: country.lng, altitude: 1.2 } : { lat: 18, lng: -38, altitude: 1.55 }, reducedMotion ? 0 : 800);
+    globeRef.current?.pointOfView(selectedPlace ? { lat: selectedPlace.lat, lng: selectedPlace.lng, altitude: 0.28 } : country ? { lat: country.lat, lng: country.lng, altitude: 0.58 } : { lat: 18, lng: -38, altitude: 0.95 }, reducedMotion ? 0 : 800);
   }, [country, ready, useFlat, reducedMotion, resetKey, selectedPlace]);
 
   useEffect(() => {
@@ -113,8 +113,13 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
     controls.autoRotate = live && !reducedMotion && !selectedCountry;
     controls.autoRotateSpeed = 0.28;
     controls.enablePan = false;
-    controls.minDistance = 125;
-    controls.maxDistance = 480;
+    controls.enableZoom = true;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.075;
+    controls.rotateSpeed = 0.62;
+    controls.zoomSpeed = 0.82;
+    controls.minDistance = 105;
+    controls.maxDistance = 520;
     globe.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
     setReady(true);
   }, [live, reducedMotion, selectedCountry]);
@@ -124,25 +129,40 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
     if (useFlat) setFlatZoomState((current) => ({ key: flatFocusKey, value: Math.max(1, Math.min(4, (current.key === flatFocusKey ? current.value : defaultFlatZoom) + direction * 0.5)) }));
     else {
       const view = globeRef.current?.pointOfView();
-      if (view) globeRef.current?.pointOfView({ ...view, altitude: Math.max(0.35, Math.min(3.6, view.altitude - direction * 0.4)) }, reducedMotion ? 0 : 300);
+      if (view) globeRef.current?.pointOfView({ ...view, altitude: Math.max(0.2, Math.min(3.8, view.altitude - direction * 0.34)) }, reducedMotion ? 0 : 300);
     }
   };
   const reset = () => {
     setFlatZoomState({ key: flatFocusKey, value: 1 });
-    globeRef.current?.pointOfView({ lat: 18, lng: -38, altitude: 1.55 }, reducedMotion ? 0 : 650);
+    globeRef.current?.pointOfView({ lat: 18, lng: -38, altitude: 0.95 }, reducedMotion ? 0 : 650);
+  };
+  const moveCamera = (latDelta: number, lngDelta: number) => {
+    if (useFlat) return;
+    const view = globeRef.current?.pointOfView();
+    if (!view) return;
+    globeRef.current?.pointOfView({ ...view, lat: Math.max(-88, Math.min(88, view.lat + latDelta)), lng: ((view.lng + lngDelta + 540) % 360) - 180 }, reducedMotion ? 0 : 260);
+  };
+  const handleMapKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "+" || event.key === "=") { event.preventDefault(); zoom(1); }
+    else if (event.key === "-" || event.key === "_") { event.preventDefault(); zoom(-1); }
+    else if (event.key === "Home" || event.key === "0") { event.preventDefault(); reset(); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); moveCamera(10, 0); }
+    else if (event.key === "ArrowDown") { event.preventDefault(); moveCamera(-10, 0); }
+    else if (event.key === "ArrowLeft") { event.preventDefault(); moveCamera(0, -12); }
+    else if (event.key === "ArrowRight") { event.preventDefault(); moveCamera(0, 12); }
   };
   const landColor = (item: WorldFeature) => item.properties.code === selectedCountry ? "#df6844" : item.properties.code === hovered ? "#e8bf6f" : counts.has(item.properties.code) ? "#2d827d" : atlasColor(item.properties.code || String(item.id || "world"));
 
-  return <div ref={hostRef} className="globe-host">
+  return <div ref={hostRef} className="globe-host" role="region" tabIndex={0} aria-label="Planeta interactivo de noticias" aria-describedby="globe-navigation-help" onKeyDown={handleMapKeyboard}>
     {useFlat ? <svg viewBox={`${Math.max(0, Math.min(1000 - 1000 / flatZoom, focus.x - 500 / flatZoom))} ${Math.max(0, Math.min(500 - 500 / flatZoom, focus.y - 250 / flatZoom))} ${1000 / flatZoom} ${500 / flatZoom}`} width="100%" height="100%" aria-label="Mapa mundial: selecciona un país para consultar su cobertura. También puedes usar el buscador de países." role="group" style={{ display: "block" }}>
       {[-60, -30, 0, 30, 60].map((latitude) => <path key={latitude} d={`M0,${projected(latitude, 0).y}H1000`} stroke="#e9d7a8" opacity="0.18" fill="none" />)}
       {[-120, -60, 0, 60, 120].map((longitude) => <path key={longitude} d={`M${projected(0, longitude).x},0V500`} stroke="#e9d7a8" opacity="0.18" fill="none" />)}
-      {mapFeatures.map((item, index) => <path key={`${item.id}-${index}`} d={item.path} fill={landColor(item)} stroke="#5d5135" strokeWidth="0.65" vectorEffect="non-scaling-stroke" fillRule="evenodd" onClick={() => item.properties.code && onSelectCountry(item.properties.code)} onMouseEnter={() => setHovered(item.properties.code)} onMouseLeave={() => setHovered("")} style={{ cursor: item.properties.code ? "pointer" : "default", transition: "fill .2s ease" }}><title>{item.properties.spanishName}: {counts.get(item.properties.code) || 0} titulares en esta muestra</title></path>)}
+      {mapFeatures.map((item, index) => <path key={`${item.id}-${index}`} d={item.path} fill={landColor(item)} stroke="#5d5135" strokeWidth="0.65" vectorEffect="non-scaling-stroke" fillRule="evenodd" role={item.properties.code ? "button" : undefined} tabIndex={item.properties.code ? 0 : undefined} aria-label={item.properties.code ? `Explorar ${item.properties.spanishName}: ${counts.get(item.properties.code) || 0} titulares` : undefined} onClick={() => item.properties.code && onSelectCountry(item.properties.code)} onKeyDown={(event) => { if (item.properties.code && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onSelectCountry(item.properties.code); } }} onMouseEnter={() => setHovered(item.properties.code)} onMouseLeave={() => setHovered("")} style={{ cursor: item.properties.code ? "pointer" : "default", transition: "fill .2s ease" }}><title>{item.properties.spanishName}: {counts.get(item.properties.code) || 0} titulares en esta muestra</title></path>)}
       {showConnections && connections.map((connection) => {
         const start = projected(connection.startLat, connection.startLng);
         const end = projected(connection.endLat, connection.endLng);
         if (Math.abs(start.x - end.x) > 500) return null;
-        return <path key={`${connection.sourceId}-${connection.targetId}`} d={`M${start.x},${start.y}Q${(start.x + end.x) / 2},${Math.min(start.y, end.y) - Math.min(90, Math.abs(start.x - end.x) / 3)} ${end.x},${end.y}`} fill="none" stroke="#eab777" strokeWidth="2.5" strokeOpacity="0.75" vectorEffect="non-scaling-stroke" onClick={() => onSelectConnection(connection)} style={{ cursor: "pointer" }}><title>{connection.label}. Abrir evidencia compartida</title></path>;
+        return <path key={`${connection.sourceId}-${connection.targetId}`} d={`M${start.x},${start.y}Q${(start.x + end.x) / 2},${Math.min(start.y, end.y) - Math.min(90, Math.abs(start.x - end.x) / 3)} ${end.x},${end.y}`} fill="none" stroke="#eab777" strokeWidth="2.5" strokeOpacity="0.75" vectorEffect="non-scaling-stroke" role="button" tabIndex={0} aria-label={`${connection.label}. Abrir evidencia compartida`} onClick={() => onSelectConnection(connection)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelectConnection(connection); } }} style={{ cursor: "pointer" }}><title>{connection.label}. Abrir evidencia compartida</title></path>;
       })}
       {mapPoints.map((point) => {
         const position = projected(point.lat, point.lng);
@@ -163,6 +183,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
       />
     </GlobeBoundary>}
     {webglFailed && <p role="status" style={{ position: "absolute", top: 12, left: 16, right: 16, margin: 0, color: "#d2e2eb", fontSize: 12 }}>Vista 2D activada: tu dispositivo no pudo iniciar el globo 3D. La cobertura sigue disponible.</p>}
+    <div className="globe-navigation-help" id="globe-navigation-help"><strong>Explora la Tierra</strong><span>Arrastra para rotar · rueda para acercar · flechas para navegar</span></div>
     <div className="globe-controls" aria-label="Controles del mapa" style={{ position: "absolute", right: 18, bottom: 20, display: "flex", gap: 5 }}>
       <button type="button" onClick={() => zoom(1)} aria-label="Acercar mapa" title="Acercar"><Plus size={17} /></button>
       <button type="button" onClick={() => zoom(-1)} aria-label="Alejar mapa" title="Alejar"><Minus size={17} /></button>
