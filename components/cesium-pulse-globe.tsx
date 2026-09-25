@@ -21,6 +21,9 @@ type Props = {
   onSelectArticle: (article: PulseArticle) => void;
   onSelectConnection: (connection: PulseConnection) => void;
   showConnections: boolean;
+  showCountryAreas: boolean;
+  showCountrySignals: boolean;
+  showExactSignals: boolean;
   resetKey: number;
 };
 
@@ -37,7 +40,7 @@ function hierarchy(Cesium: CesiumModule, polygon: number[][][]) {
   return new Cesium.PolygonHierarchy(outer, holes);
 }
 
-export default function CesiumPulseGlobe({ points, connections, articles, selectedCountry, selectedPlace, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, resetKey }: Props) {
+export default function CesiumPulseGlobe({ points, connections, articles, selectedCountry, selectedPlace, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, showCountryAreas, showCountrySignals, showExactSignals, resetKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<Runtime | null>(null);
   const callbacksRef = useRef({ onSelectCountry, onSelectArticle, onSelectConnection });
@@ -112,7 +115,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     targets.clear();
     const counts = new Map(points.map((point) => [point.id, point.count]));
 
-    for (const feature of worldFeatures) {
+    if (showCountryAreas) for (const feature of worldFeatures) {
       if (!feature.properties.code) continue;
       const polygons = feature.geometry.type === "Polygon" ? [feature.geometry.coordinates] : feature.geometry.coordinates;
       polygons.forEach((polygon, index) => {
@@ -132,12 +135,12 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
       });
     }
 
-    for (const point of points) {
+    if (showCountrySignals) for (const point of points) {
       const id = `pulse-country:${point.id}`;
       viewer.entities.add({ id, name: `${point.name}: ${point.count} titulares`, position: Cesium.Cartesian3.fromDegrees(point.lng, point.lat, 26_000), point: { pixelSize: Math.max(8, Math.min(19, 7 + Math.sqrt(point.count))), color: Cesium.Color.fromCssColorString("#9ee4da"), outlineColor: Cesium.Color.fromCssColorString("#173734"), outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectCountry(point.id));
     }
-    for (const article of articles) {
+    if (showExactSignals) for (const article of articles) {
       if (!article.location) continue;
       const id = `pulse-article:${article.id}`;
       viewer.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, 42_000), point: { pixelSize: 11, color: Cesium.Color.fromCssColorString("#f29661"), outlineColor: Cesium.Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
@@ -154,7 +157,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
       }
     }
     viewer.scene.requestRender();
-  }, [articles, connections, points, ready, selectedCountry, selectedPlace, showConnections]);
+  }, [articles, connections, points, ready, selectedCountry, selectedPlace, showConnections, showCountryAreas, showCountrySignals, showExactSignals]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
