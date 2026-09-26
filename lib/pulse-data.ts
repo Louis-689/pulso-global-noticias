@@ -157,7 +157,12 @@ export function filterTimeAndDedupe(articles: PulseArticle[], timespan: PulseTim
     .filter((article) => {
       const canonical = new URL(article.url);
       for (const key of [...canonical.searchParams.keys()]) if (/^(utm_|fbclid$|gclid$)/i.test(key)) canonical.searchParams.delete(key);
-      const title = fold(article.title);
+      // Google News appends " - Publisher" to titles; the same story from two
+      // editions would otherwise survive exact-title dedupe.
+      const baseTitle = article.destinationHost === "news.google.com"
+        ? article.title.replace(/\s+[-–—]\s+\S.{1,80}$/, "")
+        : article.title;
+      const title = fold(baseTitle);
       if (urls.has(canonical.href) || titles.has(title)) return false;
       urls.add(canonical.href); titles.add(title); return true;
     }).slice(0, limit);

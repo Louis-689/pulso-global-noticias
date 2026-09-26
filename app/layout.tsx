@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Pulso Global — Observatorio geográfico de noticias",
-  description: "Explora noticias y señales públicas por país, región, ciudad o localidad sobre un globo interactivo.",
+  title: "Ojo Global — Noticias del mundo en tiempo real",
+  description: "Observa todas las noticias del mundo en tiempo real sobre un globo interactivo: limpio, ordenado y con fuentes trazables.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
 };
 

@@ -67,6 +67,7 @@ type ProviderResult = { articles: PulseArticle[]; sources: PulseSource[]; errors
 const cache = new Map<string, { value: ProviderResult; expires: number }>();
 const inFlight = new Map<string, Promise<ProviderResult>>();
 let starts: number[] = [];
+let gdeltCooldownUntil = 0;
 export class PulseBusyError extends Error { constructor() { super("Hay demasiadas consultas nuevas. Espera unos segundos y vuelve a intentar."); } }
 // Per-process limits bound memory and upstream requests. Multi-isolate production deployments
 // should also set an edge rate limit; this is not a distributed quota.
@@ -81,7 +82,7 @@ async function cached(key: string, task: () => Promise<ProviderResult>, now: num
   starts.push(now);
   const promise = task().then((value) => {
     if (cache.size >= 64) cache.delete(cache.keys().next().value!);
-    cache.set(key, { value, expires: Date.now() + (value.articles.length ? 120000 : 30000) });
+    cache.set(key, { value, expires: Date.now() + (value.articles.length ? 90_000 : 30_000) });
     return value;
   }).finally(() => inFlight.delete(key));
   inFlight.set(key, promise);
@@ -89,7 +90,7 @@ async function cached(key: string, task: () => Promise<ProviderResult>, now: num
 }
 function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) return "La fuente devolvió datos inválidos";
-  return error instanceof Error && /^(HTTP \d{3}|Formato de respuesta inesperado|Respuesta demasiado grande|Respuesta vacía|RSS inválido|La fuente superó el tiempo de espera)$/.test(error.message) ? error.message : "No se pudo conectar con la fuente";
+  return error instanceof Error && /^(HTTP \d{3}|Formato de respuesta inesperado|Respuesta demasiado grande|Respuesta vacía|RSS inválido|La fuente superó el tiempo de espera|GDELT en espera|GDELT omitido)$/.test(error.message) ? error.message : "No se pudo conectar con la fuente";
 }
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
@@ -108,12 +109,17 @@ const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
   sports: { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
   education: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
 };
-export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFeed[] } {
+export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: NewsRssFeed[] } {
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
-  const topic = request.category === "all" && placeTerms ? "" : CATEGORY_QUERIES[request.category];
-  const gdeltParams = new URLSearchParams({ query: `${topic} ${placeTerms}`.trim(), timespan: request.timespan, mode: "artlist", maxrecords: "120", sort: "datedesc", format: "json" });
-  const rssQuery = `${topic} ${placeTerms} when:${request.timespan}`.trim();
+  const topic = request.category === "all" ? "" : CATEGORY_QUERIES[request.category];
+  const gdeltQuery = `${topic} ${placeTerms}`.trim();
+  const gdeltParams = new URLSearchParams({ query: gdeltQuery, timespan: request.timespan, mode: "artlist", maxrecords: "250", sort: "datedesc", format: "json" });
+  // Google News RSS has no `when:` operator; sending it would filter results as literal words.
+  // Parenthesized groups also make the search return stale articles, so the topic goes in flat.
+  // The API layer re-filters every item by time. With no topic and no place, use the live
+  // front-page editions instead of a search: broader and always current.
+  const rssQuery = `${topic.replace(/[()]/g, "")} ${placeTerms}`.trim();
   const editions = [
     { code: "PE", name: "Google News · Perú", hl: "es-419", gl: "PE", ceid: "PE:es-419" },
     { code: "MX", name: "Google News · México", hl: "es-419", gl: "MX", ceid: "MX:es-419" },
@@ -128,25 +134,31 @@ export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFe
   }
   const rss = editions.map((edition) => ({
     name: edition.name,
-    url: `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`,
+    url: rssQuery
+      ? `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`
+      : `https://news.google.com/rss?${new URLSearchParams({ hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`,
     homeUrl: "https://news.google.com/",
-    note: "Edición regional del índice en su idioma configurado. La hora es la comunicada por el feed y los enlaces pasan por Google News; este canal normalmente no adjunta multimedia.",
+    note: rssQuery
+      ? "Búsqueda por tema y lugar en la edición regional. Los enlaces pasan por Google News; la hora la comunica el propio feed."
+      : "Portada viva de la edición regional: titulares principales actualizados continuamente.",
   }));
   const bbc = BBC_FEEDS[request.category];
   rss.push({ name: bbc.name, url: bbc.url, homeUrl: "https://www.bbc.com/news", note: "Canal RSS público de BBC. Sus miniaturas se muestran como multimedia de la fuente y conservan el enlace al artículo original." });
-  return { gdelt: `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}`, rss };
+  return { gdelt: gdeltQuery ? `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}` : null, rss };
 }
 export async function loadNews(request: PulseRequest, now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
   const urls = newsUrls(request);
   const sources: PulseSource[] = [];
   const errors: string[] = [];
   const [gdelt, ...rssResults] = await Promise.allSettled([
-    boundedFetchText(urls.gdelt, "json", fetcher, 3_500).then((text) => {
-      const data: unknown = JSON.parse(text);
-      if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
-      return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
-    }),
-    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher, 3_500)
+    urls.gdelt && now >= gdeltCooldownUntil
+      ? boundedFetchText(urls.gdelt, "json", fetcher, 6_000).then((text) => {
+        const data: unknown = JSON.parse(text);
+        if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
+        return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
+      })
+      : Promise.reject(new Error(urls.gdelt ? "GDELT en espera" : "GDELT omitido")),
+    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher, 4_500)
       .then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" }), request.timespan, now))),
   ]);
   const gathered: PulseArticle[] = [];
@@ -154,8 +166,19 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
     gathered.push(...gdelt.value);
     sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: gdelt.value.length ? "ok" : "empty", count: gdelt.value.length, note: "Índice global multilingüe. La hora indica detección por GDELT, no acredita cuándo publicó el medio." });
   } else {
-    const note = errorMessage(gdelt.reason); errors.push(`GDELT: ${note}`);
-    sources.push({ name: "GDELT", url: "https://www.gdeltproject.org/", status: "error", count: 0, note });
+    const note = errorMessage(gdelt.reason);
+    if (note === "HTTP 429") {
+      // GDELT allows roughly one request every five seconds; back off for a full minute.
+      gdeltCooldownUntil = Date.now() + 65_000;
+    }
+    if (note !== "GDELT en espera" && note !== "GDELT omitido") errors.push(`GDELT: ${note}`);
+    sources.push({
+      name: "GDELT", url: "https://www.gdeltproject.org/", status: "empty", count: 0,
+      note: note === "HTTP 429" ? "GDELT limitó la frecuencia de consulta; se reintenta en unos minutos."
+        : note === "GDELT en espera" ? "En pausa temporal por el límite de frecuencia de GDELT."
+        : note === "GDELT omitido" ? "Sin consulta específica: el panorama mundial usa las portadas regionales y BBC."
+        : note,
+    });
   }
   rssResults.forEach((result, index) => {
     const feed = urls.rss[index];
@@ -170,10 +193,10 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   // Keep the view bounded while reserving room for source-provided multimedia.
   // A purely chronological cut can otherwise let high-volume text-only indexes
   // erase every photographic item even when a public feed supplied it.
-  const candidates = filterTimeAndDedupe(gathered, request.timespan, now, 240);
+  const candidates = filterTimeAndDedupe(gathered, request.timespan, now, 280);
   const visual = candidates.filter((article) => article.media).slice(0, 24);
   const visualIds = new Set(visual.map((article) => article.id));
-  const articles = [...visual, ...candidates.filter((article) => !visualIds.has(article.id)).slice(0, 120 - visual.length)]
+  const articles = [...visual, ...candidates.filter((article) => !visualIds.has(article.id)).slice(0, 216 - visual.length)]
     .sort((a, b) => b.seenDate.localeCompare(a.seenDate));
   return { articles, sources, errors, fetchedAt: new Date(now).toISOString() };
 }
@@ -222,7 +245,7 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
   // Share the combined early feeds across every filter; no per-query arXiv calls.
   const key = request.mode === "early" ? "early" : JSON.stringify(request);
   const result = await cached(key, () => request.mode === "early" ? loadEarly(now) : loadNews(request, now), now);
-  let articles = filterTimeAndDedupe(result.articles, request.timespan, now);
+  let articles = filterTimeAndDedupe(result.articles, request.timespan, now, 216);
   if (request.mode === "early" && request.category !== "all") {
     articles = articles.filter((article) => request.category === "science"
       ? article.kind === "earthquake" || article.kind === "preprint" || article.provider === "NASA"
@@ -235,7 +258,8 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     ...view, mode: request.mode, timespan: request.timespan, category: request.category, pointBasis: "mentionedCountries",
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
-    coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Panorama reúne todas; Ciencia agrupa USGS, NASA y arXiv; Tecnología muestra arXiv. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
-      : `Muestra combinada de hasta 120 titulares multilingües de GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones regionales de Google News y un canal temático de BBC News. La multimedia solo aparece cuando la fuente la adjunta. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
+    coverageNote: request.mode === "early"
+      ? "Fuentes públicas directas: sismos M2,5+ (USGS), alertas GDACS, publicaciones NASA e investigación en IA (arXiv). Son señales oficiales que pueden actualizarse; no predicen acontecimientos."
+      : `Muestra combinada de hasta 216 titulares multilingües: GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones de Google News y BBC News. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo: cada titular enlaza su origen.`,
   };
 }
