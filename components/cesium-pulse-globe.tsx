@@ -73,10 +73,10 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
           sceneModePicker: false, selectionIndicator: false, timeline: false, scene3DOnly: true,
           skyBox: false, shouldAnimate: false, requestRenderMode: true, maximumRenderTimeChange: Number.POSITIVE_INFINITY,
         });
-        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#081527");
+        viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#6e9690");
         viewer.scene.globe.enableLighting = false;
         viewer.scene.globe.showGroundAtmosphere = true;
-        viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#04070f");
+        viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#b8c8c0");
         viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
         viewer.scene.screenSpaceCameraController.minimumZoomDistance = 120_000;
         viewer.scene.screenSpaceCameraController.maximumZoomDistance = 45_000_000;
@@ -98,14 +98,14 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
           cluster.billboard.show = false;
           cluster.point.show = true;
           cluster.point.pixelSize = Math.min(38, 22 + Math.sqrt(entities.length) * 2.5);
-          cluster.point.color = Cesium.Color.fromCssColorString("#f5b04b").withAlpha(0.96);
-          cluster.point.outlineColor = Cesium.Color.fromCssColorString("#04121f");
+          cluster.point.color = Cesium.Color.fromCssColorString("#d8a247").withAlpha(0.96);
+          cluster.point.outlineColor = Cesium.Color.fromCssColorString("#28332d");
           cluster.point.outlineWidth = 3;
           cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
           cluster.label.show = true;
           cluster.label.text = String(entities.length);
           cluster.label.font = "700 12px Inter, sans-serif";
-          cluster.label.fillColor = Cesium.Color.fromCssColorString("#04121f");
+          cluster.label.fillColor = Cesium.Color.fromCssColorString("#28332d");
           cluster.label.outlineColor = Cesium.Color.fromCssColorString("#e8eef8");
           cluster.label.outlineWidth = 1;
           cluster.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
@@ -211,9 +211,9 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
           polygon: {
             hierarchy: hierarchy(Cesium, polygon),
             height: 0,
-            material: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#f5b04b" : hasNews ? "#0e7490" : "#13273d").withAlpha(feature.properties.code === selectedCountry ? 0.62 : hasNews ? 0.4 : 0.16),
+            material: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#c9823f" : hasNews ? "#718b5e" : "#c8c3a7").withAlpha(feature.properties.code === selectedCountry ? 0.62 : hasNews ? 0.44 : 0.22),
             outline: true,
-            outlineColor: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#fde68a" : "#3b82a6").withAlpha(0.55),
+            outlineColor: Cesium.Color.fromCssColorString(feature.properties.code === selectedCountry ? "#f7edcf" : "#536b5e").withAlpha(0.66),
           },
         });
         targets.set(id, () => callbacksRef.current.onSelectCountry(feature.properties.code));
@@ -222,23 +222,23 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
 
     if (showCountrySignals) for (const point of points) {
       const id = `pulse-country:${point.id}`;
-      signals.entities.add({ id, name: `${point.name}: ${point.count} titulares`, position: Cesium.Cartesian3.fromDegrees(point.lng, point.lat, 26_000), point: { pixelSize: Math.max(8, Math.min(16, 7 + Math.sqrt(point.count))), color: Cesium.Color.fromCssColorString("#22d3ee"), outlineColor: Cesium.Color.fromCssColorString("#04121f"), outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      signals.entities.add({ id, name: `${point.name}: ${point.count} titulares`, position: Cesium.Cartesian3.fromDegrees(point.lng, point.lat, 26_000), point: { pixelSize: Math.max(8, Math.min(16, 7 + Math.sqrt(point.count))), color: Cesium.Color.fromCssColorString("#167f7b"), outlineColor: Cesium.Color.fromCssColorString("#28332d"), outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectCountry(point.id));
     }
     if (showExactSignals) for (const article of articles) {
       if (!article.location) continue;
       const id = `pulse-article:${article.id}`;
       const focused = article.id === focusedArticleId;
-      signals.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, focused ? 68_000 : 42_000), point: { pixelSize: focused ? 18 : 10, color: Cesium.Color.fromCssColorString(focused ? "#f5b04b" : "#fb923c"), outlineColor: Cesium.Color.WHITE, outlineWidth: focused ? 4 : 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      signals.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, focused ? 68_000 : 42_000), point: { pixelSize: focused ? 18 : 10, color: Cesium.Color.fromCssColorString(focused ? "#d8a247" : "#c95e3e"), outlineColor: Cesium.Color.fromCssColorString("#f7edcf"), outlineWidth: focused ? 4 : 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectArticle(article));
     }
     if (selectedPlace) {
-      viewer.entities.add({ id: "selected-place", name: selectedPlace.name, position: Cesium.Cartesian3.fromDegrees(selectedPlace.lng, selectedPlace.lat, 58_000), point: { pixelSize: 17, color: Cesium.Color.fromCssColorString("#f5b04b"), outlineColor: Cesium.Color.WHITE, outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      viewer.entities.add({ id: "selected-place", name: selectedPlace.name, position: Cesium.Cartesian3.fromDegrees(selectedPlace.lng, selectedPlace.lat, 58_000), point: { pixelSize: 17, color: Cesium.Color.fromCssColorString("#d8a247"), outlineColor: Cesium.Color.fromCssColorString("#f7edcf"), outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
     }
     if (showConnections) {
       for (const connection of connections) {
         const id = `connection:${connection.sourceId}:${connection.targetId}`;
-        viewer.entities.add({ id, name: connection.label, polyline: { positions: Cesium.Cartesian3.fromDegreesArrayHeights([connection.startLng, connection.startLat, 90_000, connection.endLng, connection.endLat, 90_000]), width: 2.4, material: Cesium.Color.fromCssColorString("#38bdf8").withAlpha(0.85), arcType: Cesium.ArcType.GEODESIC } });
+        viewer.entities.add({ id, name: connection.label, polyline: { positions: Cesium.Cartesian3.fromDegreesArrayHeights([connection.startLng, connection.startLat, 90_000, connection.endLng, connection.endLat, 90_000]), width: 2.4, material: Cesium.Color.fromCssColorString("#b85c3b").withAlpha(0.85), arcType: Cesium.ArcType.GEODESIC } });
         targets.set(id, () => callbacksRef.current.onSelectConnection(connection));
       }
     }
