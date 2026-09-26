@@ -10,6 +10,7 @@ import type { PulseArticle, PulseConnection, PulsePoint } from "@/lib/pulse-type
 type CesiumModule = typeof import("cesium");
 type CesiumViewer = import("cesium").Viewer;
 type CesiumHandler = import("cesium").ScreenSpaceEventHandler;
+type CesiumDataSource = import("cesium").CustomDataSource;
 
 type Props = {
   points: PulsePoint[];
@@ -31,7 +32,9 @@ type Runtime = {
   Cesium: CesiumModule;
   viewer: CesiumViewer;
   handler: CesiumHandler;
+  signals: CesiumDataSource;
   targets: Map<string, () => void>;
+  disposeInput: () => void;
 };
 
 function hierarchy(Cesium: CesiumModule, polygon: number[][][]) {
@@ -75,19 +78,94 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
         viewer.scene.screenSpaceCameraController.enableCollisionDetection = true;
         viewer.scene.screenSpaceCameraController.minimumZoomDistance = 120_000;
         viewer.scene.screenSpaceCameraController.maximumZoomDistance = 45_000_000;
+        viewer.scene.screenSpaceCameraController.inertiaZoom = 0.35;
+        viewer.scene.screenSpaceCameraController.maximumMovementRatio = 0.08;
+        viewer.scene.screenSpaceCameraController.zoomEventTypes = [Cesium.CameraEventType.RIGHT_DRAG, Cesium.CameraEventType.PINCH];
         const imagery = await Cesium.TileMapServiceImageryProvider.fromUrl(Cesium.buildModuleUrl("Assets/Textures/NaturalEarthII"));
         if (cancelled) { viewer.destroy(); return; }
         viewer.imageryLayers.addImageryProvider(imagery);
+        const signals = new Cesium.CustomDataSource("pulse-signals");
+        await viewer.dataSources.add(signals);
+        signals.clustering.enabled = true;
+        signals.clustering.pixelRange = 48;
+        signals.clustering.minimumClusterSize = 2;
+        const removeClusterListener = signals.clustering.clusterEvent.addEventListener((entities, cluster) => {
+          cluster.billboard.id = entities;
+          cluster.point.id = entities;
+          cluster.label.id = entities;
+          cluster.billboard.show = false;
+          cluster.point.show = true;
+          cluster.point.pixelSize = Math.min(38, 22 + Math.sqrt(entities.length) * 2.5);
+          cluster.point.color = Cesium.Color.fromCssColorString("#f4c05f").withAlpha(0.96);
+          cluster.point.outlineColor = Cesium.Color.fromCssColorString("#173734");
+          cluster.point.outlineWidth = 3;
+          cluster.point.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+          cluster.label.show = true;
+          cluster.label.text = String(entities.length);
+          cluster.label.font = "700 12px Inter, sans-serif";
+          cluster.label.fillColor = Cesium.Color.fromCssColorString("#173734");
+          cluster.label.outlineColor = Cesium.Color.fromCssColorString("#fff1c8");
+          cluster.label.outlineWidth = 1;
+          cluster.label.style = Cesium.LabelStyle.FILL_AND_OUTLINE;
+          cluster.label.verticalOrigin = Cesium.VerticalOrigin.CENTER;
+          cluster.label.horizontalOrigin = Cesium.HorizontalOrigin.CENTER;
+          cluster.label.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+        });
         const targets = new Map<string, () => void>();
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
         handler.setInputAction((movement: { position: import("cesium").Cartesian2 }) => {
-          const picked = viewer?.scene.pick(movement.position) as { id?: { id?: string } } | undefined;
-          const id = picked?.id?.id;
+          const picked = viewer?.scene.pick(movement.position) as { id?: { id?: string } | import("cesium").Entity[] } | undefined;
+          if (Array.isArray(picked?.id) && picked.id.length > 1 && viewer) {
+            if (viewer.camera.positionCartographic.height <= 170_000) {
+              const preferred = picked.id.find((entity) => entity.id.startsWith("pulse-article:")) ?? picked.id[0];
+              targets.get(preferred.id)?.();
+              return;
+            }
+            const positions = picked.id.flatMap((entity) => {
+              const position = entity.position?.getValue(viewer!.clock.currentTime);
+              return position ? [position] : [];
+            });
+            if (positions.length) {
+              const sphere = Cesium.BoundingSphere.fromPoints(positions);
+              const range = Math.max(140_000, sphere.radius * 4.5, viewer.camera.positionCartographic.height * 0.38);
+              viewer.camera.flyToBoundingSphere(sphere, {
+                duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 0.8,
+                offset: new Cesium.HeadingPitchRange(viewer.camera.heading, -Math.PI / 2, range),
+              });
+            }
+            return;
+          }
+          const id = Array.isArray(picked?.id) ? picked.id[0]?.id : picked?.id?.id;
           if (id) targets.get(id)?.();
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-        runtime = { Cesium, viewer, handler, targets };
+
+        let wheelDelta = 0;
+        let wheelFrame = 0;
+        const onWheel = (event: WheelEvent) => {
+          event.preventDefault();
+          wheelDelta += Math.max(-240, Math.min(240, event.deltaY));
+          if (wheelFrame) return;
+          wheelFrame = window.requestAnimationFrame(() => {
+            const delta = Math.max(-240, Math.min(240, wheelDelta));
+            wheelDelta = 0;
+            wheelFrame = 0;
+            const height = viewer!.camera.positionCartographic.height;
+            const ratio = Math.max(0.012, Math.min(0.12, Math.abs(delta) / 1500));
+            const distance = height * ratio;
+            if (delta < 0 && height > 125_000) viewer!.camera.zoomIn(Math.min(distance, height - 120_000));
+            if (delta > 0 && height < 44_500_000) viewer!.camera.zoomOut(Math.min(distance, 45_000_000 - height));
+            viewer!.scene.requestRender();
+          });
+        };
+        viewer.scene.canvas.addEventListener("wheel", onWheel, { passive: false });
+        const disposeInput = () => {
+          viewer?.scene.canvas.removeEventListener("wheel", onWheel);
+          if (wheelFrame) window.cancelAnimationFrame(wheelFrame);
+          removeClusterListener();
+        };
+        runtime = { Cesium, viewer, handler, signals, targets, disposeInput };
         runtimeRef.current = runtime;
-        viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(-38, 18, 18_500_000) });
+        viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(-38, 18, 15_800_000) });
         if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
           animate(host, { opacity: [0, 1], scale: [0.985, 1], duration: 750, ease: "out(3)" });
         }
@@ -102,6 +180,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     return () => {
       cancelled = true;
       if (runtime) {
+        runtime.disposeInput();
         runtime.handler.destroy();
         if (!runtime.viewer.isDestroyed()) runtime.viewer.destroy();
       } else if (viewer && !viewer.isDestroyed()) viewer.destroy();
@@ -112,8 +191,9 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime || !ready) return;
-    const { Cesium, viewer, targets } = runtime;
+    const { Cesium, viewer, signals, targets } = runtime;
     viewer.entities.removeAll();
+    signals.entities.removeAll();
     targets.clear();
     const counts = new Map(points.map((point) => [point.id, point.count]));
 
@@ -140,13 +220,13 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
 
     if (showCountrySignals) for (const point of points) {
       const id = `pulse-country:${point.id}`;
-      viewer.entities.add({ id, name: `${point.name}: ${point.count} titulares`, position: Cesium.Cartesian3.fromDegrees(point.lng, point.lat, 26_000), point: { pixelSize: Math.max(8, Math.min(19, 7 + Math.sqrt(point.count))), color: Cesium.Color.fromCssColorString("#9ee4da"), outlineColor: Cesium.Color.fromCssColorString("#173734"), outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      signals.entities.add({ id, name: `${point.name}: ${point.count} titulares`, position: Cesium.Cartesian3.fromDegrees(point.lng, point.lat, 26_000), point: { pixelSize: Math.max(8, Math.min(16, 7 + Math.sqrt(point.count))), color: Cesium.Color.fromCssColorString("#9ee4da"), outlineColor: Cesium.Color.fromCssColorString("#173734"), outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectCountry(point.id));
     }
     if (showExactSignals) for (const article of articles) {
       if (!article.location) continue;
       const id = `pulse-article:${article.id}`;
-      viewer.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, 42_000), point: { pixelSize: 11, color: Cesium.Color.fromCssColorString("#f29661"), outlineColor: Cesium.Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      signals.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, 42_000), point: { pixelSize: 10, color: Cesium.Color.fromCssColorString("#f29661"), outlineColor: Cesium.Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectArticle(article));
     }
     if (selectedPlace) {
@@ -168,7 +248,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     const country = countries.find((item) => item.code === selectedCountry);
     const target = selectedPlace || country;
     runtime.viewer.camera.flyTo({
-      destination: target ? runtime.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, selectedPlace ? 580_000 : 2_900_000) : runtime.Cesium.Cartesian3.fromDegrees(-38, 18, 18_500_000),
+      destination: target ? runtime.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, selectedPlace ? 580_000 : 2_900_000) : runtime.Cesium.Cartesian3.fromDegrees(-38, 18, 15_800_000),
       duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.25,
     });
   }, [ready, resetKey, selectedCountry, selectedPlace]);
@@ -177,16 +257,17 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     const runtime = runtimeRef.current;
     if (!runtime) return;
     const height = runtime.viewer.camera.positionCartographic.height;
-    if (factor > 0) runtime.viewer.camera.zoomIn(Math.max(80_000, height * 0.32));
-    else runtime.viewer.camera.zoomOut(Math.max(80_000, height * 0.38));
+    if (factor > 0) runtime.viewer.camera.zoomIn(Math.max(60_000, height * 0.16));
+    else runtime.viewer.camera.zoomOut(Math.max(60_000, height * 0.18));
+    runtime.viewer.scene.requestRender();
   };
-  const reset = () => runtimeRef.current?.viewer.camera.flyTo({ destination: runtimeRef.current.Cesium.Cartesian3.fromDegrees(-38, 18, 18_500_000), duration: 1 });
+  const reset = () => runtimeRef.current?.viewer.camera.flyTo({ destination: runtimeRef.current.Cesium.Cartesian3.fromDegrees(-38, 18, 15_800_000), duration: 1 });
 
   return <div className="cesium-globe" role="region" aria-label="Tierra realista interactiva de noticias">
     <div ref={hostRef} className="cesium-canvas" />
     {!ready && !failed && <div className="map-loading"><Loader2 className="spin" aria-hidden="true" /><span>Cargando Tierra realista…</span></div>}
     {failed && <div className="cesium-failure" role="alert"><strong>No se pudo iniciar Cesium.</strong><span>Usa la vista ilustrada o el mapa 2D.</span></div>}
-    <div className="globe-navigation-help"><strong>Tierra realista</strong><span>Arrastra para rotar · rueda para acercar · clic en un país o señal</span></div>
+    <div className="globe-navigation-help"><strong>Tierra realista</strong><span>Arrastra para rotar · rueda: zoom suave · los grupos se abren al acercar</span></div>
     <div className="globe-controls" aria-label="Controles de la Tierra" style={{ position: "absolute", right: 18, bottom: 20, display: "flex", gap: 5 }}>
       <button type="button" onClick={() => zoom(1)} aria-label="Acercar Tierra" title="Acercar"><Plus size={17} /></button>
       <button type="button" onClick={() => zoom(-1)} aria-label="Alejar Tierra" title="Alejar"><Minus size={17} /></button>
