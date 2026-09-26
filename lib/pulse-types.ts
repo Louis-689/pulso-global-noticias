@@ -19,6 +19,7 @@ export type PulseArticle = {
   provider: string;
   kind: "news" | "earthquake" | "preprint" | "official";
   reviewStatus: "unknown" | "preliminary" | "reviewed" | "not-peer-reviewed";
+  media?: { url: string; type: "image" | "video"; credit: string };
   mentionedCountries: MentionedCountry[];
   location?: { lat: number; lng: number; label: string };
   sentiment: number;

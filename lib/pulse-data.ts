@@ -134,6 +134,9 @@ export function normalizeArticle(raw: unknown, context: ArticleContext): PulseAr
   const destinationHost = new URL(url).hostname;
   const sourceName = context.sourceName ?? (cleanText(record.sourceName || record.domain, 150) || destinationHost);
   const timestampBasis = context.timestampBasis ?? "published";
+  const mediaUrl = safeArticleUrl(record.socialimage ?? record.mediaUrl ?? record.image);
+  const mediaType = record.mediaType === "video" ? "video" : "image";
+  const media = mediaUrl ? { url: mediaUrl, type: mediaType, credit: sourceName } as const : undefined;
   const rawLocation = record.location as { lat?: unknown; lng?: unknown; label?: unknown } | undefined;
   const location = rawLocation && typeof rawLocation.lat === "number" && typeof rawLocation.lng === "number" && Number.isFinite(rawLocation.lat) && Number.isFinite(rawLocation.lng) && Math.abs(rawLocation.lat) <= 90 && Math.abs(rawLocation.lng) <= 180
     ? { lat: rawLocation.lat, lng: rawLocation.lng, label: cleanText(rawLocation.label) || title } : undefined;
@@ -141,7 +144,7 @@ export function normalizeArticle(raw: unknown, context: ArticleContext): PulseAr
     id: stableId(url), url, title, domain: destinationHost, sourceName, destinationHost,
     sourceCountry: cleanText(record.sourcecountry, 80), language: cleanText(record.language, 30) || "No indicado",
     seenDate, publishedAt: timestampBasis === "published" ? seenDate : null, timestampBasis,
-    provider: context.provider, kind: context.kind ?? "news", reviewStatus: context.reviewStatus ?? "unknown",
+    provider: context.provider, kind: context.kind ?? "news", reviewStatus: context.reviewStatus ?? "unknown", ...(media ? { media } : {}),
     mentionedCountries: detectMentionedCountries(title), ...(location ? { location } : {}), ...lexicalTone(title),
   };
 }
@@ -199,11 +202,19 @@ export function parseRssItems(xml: string): Array<Record<string, unknown>> {
   for (const match of xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)) {
     const item = match[1];
     const pick = (tag: string) => cleanText(item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"))?.[1], tag === "link" ? 2500 : 700);
+    const pickAttribute = (tag: string, attribute: string) => cleanText(item.match(new RegExp(`<${tag}\\b[^>]*\\b${attribute}=["']([^"']+)["'][^>]*>`, "i"))?.[1], 2500);
+    const mediaContent = pickAttribute("media:content", "url");
+    const mediaThumbnail = pickAttribute("media:thumbnail", "url");
+    const enclosure = pickAttribute("enclosure", "url");
+    const enclosureType = pickAttribute("enclosure", "type");
+    const contentType = pickAttribute("media:content", "type");
+    const mediaUrl = mediaContent || mediaThumbnail || enclosure;
+    const mediaType = /video/i.test(contentType || enclosureType) ? "video" : "image";
     const [lat, lng] = pick("georss:point").split(/\s+/).map(Number);
     const location = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
       ? { lat, lng, label: pick("gdacs:country") || pick("title") }
       : undefined;
-    articles.push({ title: pick("title"), url: pick("link"), sourceName: pick("source"), timestamp: pick("pubDate"), announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference"), ...(location ? { location } : {}) });
+    articles.push({ title: pick("title"), url: pick("link"), sourceName: pick("source"), timestamp: pick("pubDate"), announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference"), ...(mediaUrl ? { mediaUrl, mediaType } : {}), ...(location ? { location } : {}) });
     if (articles.length >= 500) break;
   }
   return articles;

@@ -12,6 +12,7 @@ export type PulseGlobeProps = {
   connections: PulseConnection[];
   articles: PulseArticle[];
   selectedCountry: string;
+  focusedArticleId: string;
   onSelectCountry: (code: string) => void;
   onSelectArticle: (article: PulseArticle) => void;
   onSelectConnection: (connection: PulseConnection) => void;
@@ -38,7 +39,7 @@ class GlobeBoundary extends Component<{ children: ReactNode; onFailure: () => vo
   render() { return this.state.failed ? null : this.props.children; }
 }
 
-export default function PulseGlobe({ points, connections, articles, selectedCountry, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, flat, resetKey, live, selectedPlace }: PulseGlobeProps) {
+export default function PulseGlobe({ points, connections, articles, selectedCountry, focusedArticleId, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, flat, resetKey, live, selectedPlace }: PulseGlobeProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 640, height: 480 });
@@ -59,6 +60,8 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
     ...articles.filter((article) => article.location && isValidLocation(article.location.lat, article.location.lng)).map((article) => ({ lat: article.location!.lat, lng: article.location!.lng, count: 1, name: article.location!.label, article })),
   ], [points, articles, selectedPlace]);
   const country = countries.find((item) => item.code === selectedCountry);
+  const focusedArticle = articles.find((item) => item.id === focusedArticleId);
+  const focusedTarget = focusedArticle?.location || focusedArticle?.mentionedCountries[0];
   const focusLat = selectedPlace?.lat ?? country?.lat ?? 0;
   const focusLng = selectedPlace?.lng ?? country?.lng ?? 0;
   const focus = projected(focusLat, focusLng);
@@ -89,6 +92,11 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
     if (!ready || useFlat) return;
     globeRef.current?.pointOfView(selectedPlace ? { lat: selectedPlace.lat, lng: selectedPlace.lng, altitude: 0.28 } : country ? { lat: country.lat, lng: country.lng, altitude: 0.58 } : { lat: 18, lng: -38, altitude: 0.95 }, reducedMotion ? 0 : 800);
   }, [country, ready, useFlat, reducedMotion, resetKey, selectedPlace]);
+
+  useEffect(() => {
+    if (!ready || useFlat || !focusedTarget) return;
+    globeRef.current?.pointOfView({ lat: focusedTarget.lat, lng: focusedTarget.lng, altitude: focusedArticle?.location ? 0.34 : 0.58 }, reducedMotion ? 0 : 800);
+  }, [focusedArticle?.location, focusedTarget, ready, reducedMotion, useFlat]);
 
   useEffect(() => {
     if (!ready || useFlat) return;
@@ -168,7 +176,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
         const position = projected(point.lat, point.lng);
         const interactive = !!(point.article || point.country);
         return <g key={point.selectedPlace ? `selected-${point.name}` : point.article?.id || point.country!.id} {...(interactive ? { role: "button", tabIndex: 0, onClick: () => selectPoint(point), onKeyDown: (event: ReactKeyboardEvent<SVGGElement>) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectPoint(point); } } } : {})} aria-label={point.selectedPlace ? `Lugar seleccionado: ${point.name}` : point.article ? `Ver evento: ${point.article.title}` : `Ver ${point.name}: ${point.count} titulares`} style={{ cursor: interactive ? "pointer" : "default" }}>
-          <circle cx={position.x} cy={position.y} r={(point.selectedPlace ? 9 : Math.max(4, Math.min(9, 3 + Math.sqrt(point.count)))) / Math.sqrt(flatZoom)} fill={point.selectedPlace ? "#f4c05f" : point.article ? "#ee8b5b" : "#9edbd0"} stroke={point.selectedPlace ? "#fff1bd" : "#173734"} strokeWidth={point.selectedPlace ? "2.5" : "1.5"} vectorEffect="non-scaling-stroke" />
+          <circle cx={position.x} cy={position.y} r={(point.selectedPlace || point.article?.id === focusedArticleId ? 9 : Math.max(4, Math.min(9, 3 + Math.sqrt(point.count)))) / Math.sqrt(flatZoom)} fill={point.selectedPlace || point.article?.id === focusedArticleId ? "#f4c05f" : point.article ? "#ee8b5b" : "#9edbd0"} stroke={point.selectedPlace || point.article?.id === focusedArticleId ? "#fff1bd" : "#173734"} strokeWidth={point.selectedPlace || point.article?.id === focusedArticleId ? "2.5" : "1.5"} vectorEffect="non-scaling-stroke" />
           <title>{point.selectedPlace ? `${point.name} · lugar seleccionado` : point.article?.title || `${point.name}: ${point.count} titulares · ubicación aproximada del país`}</title>
         </g>;
       })}
@@ -177,7 +185,7 @@ export default function PulseGlobe({ points, connections, articles, selectedCoun
         polygonsData={worldFeatures} polygonAltitude={(item) => (item as WorldFeature).properties.code === selectedCountry ? 0.011 : 0.003} polygonCapColor={(item) => landColor(item as WorldFeature)} polygonSideColor={() => "#5d6b4d"} polygonStrokeColor={() => "#ead9a8"} polygonsTransitionDuration={reducedMotion ? 0 : 180}
         polygonLabel={(item) => { const value = item as WorldFeature; return `<div style="padding:9px 11px;color:#f7efd9;background:#173734;border:1px solid #b5965f;border-radius:4px;font:13px/1.5 Georgia,serif"><strong>${escapeHtml(value.properties.spanishName)}</strong><br/>${counts.get(value.properties.code) || 0} titulares en esta muestra<br/><span style="color:#bcd8d1">Clic para explorar el país</span></div>`; }}
         onPolygonHover={(item) => setHovered(item ? (item as WorldFeature).properties.code : "")} onPolygonClick={(item) => { const code = (item as WorldFeature).properties.code; if (code) onSelectCountry(code); }}
-        pointsData={mapPoints} pointLat="lat" pointLng="lng" pointAltitude={(item) => (item as MapPoint).selectedPlace ? 0.035 : 0.018} pointColor={(item) => (item as MapPoint).selectedPlace ? "#f4c05f" : (item as MapPoint).article ? "#ee8b5b" : "#a8e0d5"} pointRadius={(item) => (item as MapPoint).selectedPlace ? 0.72 : Math.max(0.26, Math.min(0.8, 0.2 + Math.sqrt((item as MapPoint).count) * 0.11))} pointResolution={12} pointsTransitionDuration={reducedMotion ? 0 : 450}
+        pointsData={mapPoints} pointLat="lat" pointLng="lng" pointAltitude={(item) => (item as MapPoint).selectedPlace || (item as MapPoint).article?.id === focusedArticleId ? 0.035 : 0.018} pointColor={(item) => (item as MapPoint).selectedPlace || (item as MapPoint).article?.id === focusedArticleId ? "#f4c05f" : (item as MapPoint).article ? "#ee8b5b" : "#a8e0d5"} pointRadius={(item) => (item as MapPoint).selectedPlace || (item as MapPoint).article?.id === focusedArticleId ? 0.72 : Math.max(0.26, Math.min(0.8, 0.2 + Math.sqrt((item as MapPoint).count) * 0.11))} pointResolution={12} pointsTransitionDuration={reducedMotion ? 0 : 450}
         pointLabel={(item) => { const value = item as MapPoint; return `<div style="max-width:260px;padding:9px 11px;color:#f7efd9;background:#173734;border:1px solid #b5965f;border-radius:4px;font:13px/1.5 Georgia,serif">${escapeHtml(value.selectedPlace ? value.name : value.article?.title || `${value.name}: ${value.count} titulares`)}<br/><span style="color:#bcd8d1">${value.selectedPlace ? "Lugar seleccionado · las noticias siguen exigiendo evidencia explícita" : value.article ? "Ubicación publicada por la fuente · clic para abrir" : "Centro aproximado del país · clic para explorar"}</span></div>`; }} onPointClick={(item) => { const value = item as MapPoint; if (!value.selectedPlace) selectPoint(value); }}
         arcsData={showConnections ? connections : []} arcStartLat="startLat" arcStartLng="startLng" arcEndLat="endLat" arcEndLng="endLng" arcColor={() => ["#a8e0d5cc", "#df8a55cc"]} arcStroke={0.45} arcAltitudeAutoScale={0.35} arcDashLength={0.34} arcDashGap={0.12} arcDashAnimateTime={live && !reducedMotion ? 1800 : 0} arcsTransitionDuration={reducedMotion ? 0 : 400} arcLabel={(item) => escapeHtml(`${(item as PulseConnection).label} · Clic para ver los titulares compartidos`)} onArcClick={(item) => onSelectConnection(item as PulseConnection)}
       />

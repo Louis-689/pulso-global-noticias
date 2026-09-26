@@ -18,6 +18,7 @@ type Props = {
   articles: PulseArticle[];
   selectedCountry: string;
   selectedPlace: { lat: number; lng: number; name: string } | null;
+  focusedArticleId: string;
   onSelectCountry: (code: string) => void;
   onSelectArticle: (article: PulseArticle) => void;
   onSelectConnection: (connection: PulseConnection) => void;
@@ -43,7 +44,7 @@ function hierarchy(Cesium: CesiumModule, polygon: number[][][]) {
   return new Cesium.PolygonHierarchy(outer, holes);
 }
 
-export default function CesiumPulseGlobe({ points, connections, articles, selectedCountry, selectedPlace, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, showCountryAreas, showCountrySignals, showExactSignals, resetKey }: Props) {
+export default function CesiumPulseGlobe({ points, connections, articles, selectedCountry, selectedPlace, focusedArticleId, onSelectCountry, onSelectArticle, onSelectConnection, showConnections, showCountryAreas, showCountrySignals, showExactSignals, resetKey }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<Runtime | null>(null);
   const callbacksRef = useRef({ onSelectCountry, onSelectArticle, onSelectConnection });
@@ -226,7 +227,8 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
     if (showExactSignals) for (const article of articles) {
       if (!article.location) continue;
       const id = `pulse-article:${article.id}`;
-      signals.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, 42_000), point: { pixelSize: 10, color: Cesium.Color.fromCssColorString("#f29661"), outlineColor: Cesium.Color.WHITE, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
+      const focused = article.id === focusedArticleId;
+      signals.entities.add({ id, name: article.title, position: Cesium.Cartesian3.fromDegrees(article.location.lng, article.location.lat, focused ? 68_000 : 42_000), point: { pixelSize: focused ? 18 : 10, color: Cesium.Color.fromCssColorString(focused ? "#f4c05f" : "#f29661"), outlineColor: Cesium.Color.WHITE, outlineWidth: focused ? 4 : 2, disableDepthTestDistance: Number.POSITIVE_INFINITY } });
       targets.set(id, () => callbacksRef.current.onSelectArticle(article));
     }
     if (selectedPlace) {
@@ -240,7 +242,7 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
       }
     }
     viewer.scene.requestRender();
-  }, [articles, connections, points, ready, selectedCountry, selectedPlace, showConnections, showCountryAreas, showCountrySignals, showExactSignals]);
+  }, [articles, connections, focusedArticleId, points, ready, selectedCountry, selectedPlace, showConnections, showCountryAreas, showCountrySignals, showExactSignals]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -252,6 +254,19 @@ export default function CesiumPulseGlobe({ points, connections, articles, select
       duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.25,
     });
   }, [ready, resetKey, selectedCountry, selectedPlace]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || !ready || !focusedArticleId) return;
+    const article = articles.find((item) => item.id === focusedArticleId);
+    const country = article?.mentionedCountries[0];
+    const target = article?.location || country;
+    if (!target) return;
+    runtime.viewer.camera.flyTo({
+      destination: runtime.Cesium.Cartesian3.fromDegrees(target.lng, target.lat, article?.location ? 720_000 : 2_600_000),
+      duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.05,
+    });
+  }, [articles, focusedArticleId, ready]);
 
   const zoom = (factor: number) => {
     const runtime = runtimeRef.current;
