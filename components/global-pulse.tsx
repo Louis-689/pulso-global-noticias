@@ -354,8 +354,8 @@ export function GlobalPulse() {
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); setSpeaking(true);
   }
   const title = selectedPlace?.displayName || countryName || (mode === "early" ? "Señales públicas tempranas" : categoryLabel(category));
-  const leadArticle = visibleArticles[0];
-  const remainingArticles = visibleArticles.slice(1);
+  const leadArticle = visibleArticles.find((article) => article.media) ?? visibleArticles[0];
+  const remainingArticles = visibleArticles.filter((article) => article.id !== leadArticle?.id);
 
   return <main className="world-console">
     <header className="app-header">

@@ -94,7 +94,20 @@ function errorMessage(error: unknown): string {
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
 }
-type NewsRssFeed = { name: string; url: string };
+type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string };
+const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
+  all: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  politics: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  economy: { name: "BBC News · Negocios", url: "https://feeds.bbci.co.uk/news/business/rss.xml" },
+  technology: { name: "BBC News · Tecnología", url: "https://feeds.bbci.co.uk/news/technology/rss.xml" },
+  science: { name: "BBC News · Ciencia", url: "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml" },
+  health: { name: "BBC News · Salud", url: "https://feeds.bbci.co.uk/news/health/rss.xml" },
+  climate: { name: "BBC News · Ambiente", url: "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml" },
+  security: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  culture: { name: "BBC News · Cultura", url: "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml" },
+  sports: { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
+  education: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+};
 export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFeed[] } {
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
@@ -116,7 +129,11 @@ export function newsUrls(request: PulseRequest): { gdelt: string; rss: NewsRssFe
   const rss = editions.map((edition) => ({
     name: edition.name,
     url: `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`,
+    homeUrl: "https://news.google.com/",
+    note: "Edición regional del índice en su idioma configurado. La hora es la comunicada por el feed y los enlaces pasan por Google News; este canal normalmente no adjunta multimedia.",
   }));
+  const bbc = BBC_FEEDS[request.category];
+  rss.push({ name: bbc.name, url: bbc.url, homeUrl: "https://www.bbc.com/news", note: "Canal RSS público de BBC. Sus miniaturas se muestran como multimedia de la fuente y conservan el enlace al artículo original." });
   return { gdelt: `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}`, rss };
 }
 export async function loadNews(request: PulseRequest, now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
@@ -144,15 +161,20 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
     const feed = urls.rss[index];
     if (result.status === "fulfilled") {
       gathered.push(...result.value);
-      sources.push({ name: feed.name, url: "https://news.google.com/", status: result.value.length ? "ok" : "empty", count: result.value.length, note: "Edición regional del índice en su idioma configurado. La hora es la comunicada por el feed y los enlaces pasan por Google News." });
+      sources.push({ name: feed.name, url: feed.homeUrl, status: result.value.length ? "ok" : "empty", count: result.value.length, note: feed.note });
     } else {
       const note = errorMessage(result.reason); errors.push(`${feed.name}: ${note}`);
       sources.push({ name: feed.name, url: "https://news.google.com/", status: "error", count: 0, note });
     }
   });
-  // Merge both public indexes instead of treating one as a fallback. This
-  // improves source diversity while retaining the same bounded 120-item view.
-  const articles = filterTimeAndDedupe(gathered, request.timespan, now);
+  // Keep the view bounded while reserving room for source-provided multimedia.
+  // A purely chronological cut can otherwise let high-volume text-only indexes
+  // erase every photographic item even when a public feed supplied it.
+  const candidates = filterTimeAndDedupe(gathered, request.timespan, now, 240);
+  const visual = candidates.filter((article) => article.media).slice(0, 24);
+  const visualIds = new Set(visual.map((article) => article.id));
+  const articles = [...visual, ...candidates.filter((article) => !visualIds.has(article.id)).slice(0, 120 - visual.length)]
+    .sort((a, b) => b.seenDate.localeCompare(a.seenDate));
   return { articles, sources, errors, fetchedAt: new Date(now).toISOString() };
 }
 
@@ -214,6 +236,6 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
     coverageNote: request.mode === "early" ? "Fuentes públicas directas: sismos M2,5+, alertas GDACS, publicaciones NASA e investigación en IA. Panorama reúne todas; Ciencia agrupa USGS, NASA y arXiv; Tecnología muestra arXiv. No garantizan primicia ni predicen acontecimientos; alertas y preprints pueden cambiar."
-      : `Muestra combinada de hasta 120 titulares multilingües de GDELT y ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones regionales de Google News. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
+      : `Muestra combinada de hasta 120 titulares multilingües de GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones regionales de Google News y un canal temático de BBC News. La multimedia solo aparece cuando la fuente la adjunta. El mapa muestra menciones explícitas, no el lugar confirmado de los hechos.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} GDELT informa detección; RSS informa publicación. No es un archivo completo.`,
   };
 }
