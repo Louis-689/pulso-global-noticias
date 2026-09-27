@@ -174,6 +174,15 @@ const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
   sports: { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
   education: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
 };
+const CATEGORY_DIRECT_FEEDS: Partial<Record<PulseCategory, NewsRssFeed>> = {
+  economy: { name: "NPR · Business", url: "https://feeds.npr.org/1006/rss.xml", homeUrl: "https://www.npr.org/sections/business/", note: "Canal RSS temático directo de NPR Business.", timeoutMs: 5_000 },
+  technology: { name: "TechCrunch", url: "https://techcrunch.com/feed/", homeUrl: "https://techcrunch.com/", note: "Canal RSS temático directo de TechCrunch.", timeoutMs: 5_000 },
+  science: { name: "ScienceDaily", url: "https://www.sciencedaily.com/rss/all.xml", homeUrl: "https://www.sciencedaily.com/", note: "Canal RSS directo de novedades científicas de ScienceDaily; cada artículo conserva su fuente.", timeoutMs: 5_000 },
+  health: { name: "WHO · News", url: "https://www.who.int/rss-feeds/news-english.xml", homeUrl: "https://www.who.int/news", note: "Canal RSS institucional de noticias de la Organización Mundial de la Salud.", timeoutMs: 5_000 },
+  climate: { name: "Climate Home News", url: "https://www.climatechangenews.com/feed/", homeUrl: "https://www.climatechangenews.com/", note: "Canal RSS temático directo de Climate Home News.", timeoutMs: 5_000 },
+  culture: { name: "NPR · Arts & Life", url: "https://feeds.npr.org/1008/rss.xml", homeUrl: "https://www.npr.org/sections/arts/", note: "Canal RSS temático directo de NPR Arts & Life.", timeoutMs: 5_000 },
+  education: { name: "EdSurge", url: "https://www.edsurge.com/articles_rss", homeUrl: "https://www.edsurge.com/", note: "Canal RSS temático directo de EdSurge.", timeoutMs: 5_000 },
+};
 export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: NewsRssFeed[] } {
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
@@ -223,7 +232,9 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
     health: "society/health", climate: "environment/climate-crisis", security: "world", culture: "culture",
     sports: "sport", education: "education",
   };
+  const categoryDirect = CATEGORY_DIRECT_FEEDS[request.category];
   const directFeeds: NewsRssFeed[] = [
+    ...(categoryDirect ? [categoryDirect] : []),
     { name: "Al Jazeera English", url: "https://www.aljazeera.com/xml/rss/all.xml", homeUrl: "https://www.aljazeera.com/", note: "Canal RSS público directo de Al Jazeera English.", timeoutMs: 5_000 },
     { name: "NPR · World", url: "https://feeds.npr.org/1004/rss.xml", homeUrl: "https://www.npr.org/sections/world/", note: "Canal RSS público directo de NPR World.", timeoutMs: 5_000 },
     { name: `The Guardian · ${request.category}`, url: `https://www.theguardian.com/${guardianSection[request.category]}/rss`, homeUrl: `https://www.theguardian.com/${guardianSection[request.category]}`, note: "Canal RSS temático directo de The Guardian.", timeoutMs: 5_000, filterToTopic: false },
