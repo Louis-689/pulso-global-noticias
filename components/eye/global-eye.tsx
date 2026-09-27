@@ -167,6 +167,23 @@ export function GlobalEye() {
     if (nextMode === "early" && !EARLY_CATEGORIES.has(category)) setCategory("all");
     setMode(nextMode);
   }
+  function selectCategory(nextCategory: PulseCategory) {
+    cancelPlaceSearch();
+    setCategory(nextCategory);
+    setFeedMode("latest");
+    // A town search is intentionally narrow and was previously carried into
+    // every topic without a visible explanation, often producing an apparent
+    // all-zero dashboard. Topic navigation returns to the selected country (or
+    // the world) while the exact-place box remains available for a new drilldown.
+    if (selectedPlace || query) {
+      setSelectedPlace(null);
+      setQuery("");
+      setSearchDraft("");
+      setPlaceDraft("");
+      setPlaceResults([]);
+      setPlaceMessage("");
+    }
+  }
   function selectCountry(code: string) {
     cancelPlaceSearch();
     setSelectedPlace(null);
@@ -214,6 +231,7 @@ export function GlobalEye() {
   const renderedArticles = remainingArticles.slice(0, Math.max(0, visibleCount - (leadArticle ? 1 : 0)));
   const statusLabel = loading ? "Actualizando" : error ? "Sin conexión" : data?.partial ? "Cobertura parcial" : "En vivo";
   const okSources = data?.sources.filter((source) => source.status === "ok") ?? [];
+  const unavailable = !!error && !data?.sources.length;
 
   return <main className="eye-console">
     <header className="eye-header">
@@ -256,7 +274,7 @@ export function GlobalEye() {
           <span className="rail-group-label">{group.group}</span>
           {group.items.map(([id, label]) => {
             const unavailable = mode === "early" && !EARLY_CATEGORIES.has(id);
-            return <button key={id} disabled={unavailable} title={unavailable ? "Las señales tempranas cubren Panorama, Ciencia y Tecnología." : undefined} className={category === id ? "topic active" : "topic"} onClick={() => setCategory(id)}>{label}</button>;
+            return <button key={id} disabled={unavailable} title={unavailable ? "Las señales tempranas cubren Panorama, Ciencia y Tecnología." : undefined} className={category === id ? "topic active" : "topic"} onClick={() => selectCategory(id)}>{label}</button>;
           })}
         </div>)}
       </div>
@@ -301,7 +319,7 @@ export function GlobalEye() {
             <div className="map-title">
               <span className="map-kicker">OJO GLOBAL</span>
               <h1>{title}</h1>
-              <p>{data ? `${data.points.length} países con menciones · ${data.stats.total} registros en muestra` : "Conectando fuentes públicas…"}</p>
+              <p>{data ? `${data.points.length} países con menciones · ${data.stats.total} registros en muestra` : `Buscando ${categoryLabel(category).toLowerCase()} en fuentes públicas…`}</p>
             </div>
             <div className="map-tools">
               <div className="view-switch" role="group" aria-label="Vista del mapa">
@@ -346,9 +364,9 @@ export function GlobalEye() {
             </div>
           </div>
           <div className="metric-strip">
-            <div><strong>{data?.stats.total ?? 0}</strong><span>registros</span></div>
-            <div><strong>{data?.stats.located ?? 0}</strong><span>geolocalizados</span></div>
-            <div><strong>{data?.stats.unlocated ?? 0}</strong><span>sin ubicar</span></div>
+            <div><strong>{unavailable ? "—" : data?.stats.total ?? "—"}</strong><span>registros</span></div>
+            <div><strong>{unavailable ? "—" : data?.stats.located ?? "—"}</strong><span>geolocalizados</span></div>
+            <div><strong>{unavailable ? "—" : data?.stats.unlocated ?? "—"}</strong><span>sin ubicar</span></div>
             <div><strong>{data?.tension == null ? "—" : `${data.tension}%`}</strong><span>tensión léxica</span></div>
             <button className="sources-link" onClick={() => setSourcesOpen(true)} title="Ver fuentes consultadas">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z" /></svg>
@@ -362,7 +380,7 @@ export function GlobalEye() {
           <div className="news-heading">
             <h2>{mode === "early" ? "Señales verificables" : "Titulares en vivo"}</h2>
             <div className="news-tools">
-              <span className="result-count">{visibleArticles.length}</span>
+              <span className={`result-count${loading && !data ? " loading" : ""}`}>{loading && !data ? "…" : unavailable ? "—" : visibleArticles.length}</span>
               <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} aria-label="Ordenar noticias">
                 <option value="newest">Más recientes</option>
                 <option value="coverage">Mayor alcance</option>
@@ -379,8 +397,8 @@ export function GlobalEye() {
           <div className="feed" role="tabpanel" aria-live="polite" aria-busy={loading}>
             {loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}
             {!loading && visibleArticles.length === 0 && <div className="empty-state">
-              <strong>{feedMode === "saved" ? "Todavía no guardas noticias" : "Sin resultados para esta combinación"}</strong>
-              <p>{feedMode === "saved" ? "Usa el marcador de cualquier tarjeta para conservarla." : "Amplía la ventana temporal, cambia el tema o borra el lugar."}</p>
+              <strong>{feedMode === "saved" ? "Todavía no guardas noticias" : unavailable ? "Fuentes momentáneamente no disponibles" : "Sin resultados para esta combinación"}</strong>
+              <p>{feedMode === "saved" ? "Usa el marcador de cualquier tarjeta para conservarla." : unavailable ? "Conservamos el estado de la interfaz. Pulsa Reintentar cuando vuelva la conexión." : "Amplía la ventana temporal, cambia el tema o borra el lugar."}</p>
             </div>}
             {leadArticle && <LeadStory key={leadArticle.id} article={leadArticle} fresh={freshIds.has(leadArticle.id)} saved={saved.includes(leadArticle.id)} onOpen={openArticle} onFocus={focusArticleOnMap} onSave={toggleSaved} />}
             <div className="story-list">

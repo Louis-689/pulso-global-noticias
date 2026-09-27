@@ -213,7 +213,12 @@ export function parseRssItems(xml: string): Array<Record<string, unknown>> {
     const enclosure = pickAttribute("enclosure", "url");
     const enclosureType = pickAttribute("enclosure", "type");
     const contentType = pickAttribute("media:content", "type");
-    const mediaUrl = mediaContent || mediaThumbnail || enclosure;
+    // A number of legitimate publishers only place the lead image inside the
+    // description HTML. Keep it as a final fallback so the interface can show
+    // source-provided media without scraping or inventing an image.
+    const descriptionBlock = item.match(/<description(?:\s[^>]*)?>([\s\S]*?)<\/description>/i)?.[1] ?? "";
+    const embeddedImage = cleanText(descriptionBlock.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/i)?.[1], 2500);
+    const mediaUrl = mediaContent || mediaThumbnail || enclosure || embeddedImage;
     const mediaType = /video/i.test(contentType || enclosureType) ? "video" : "image";
     const [lat, lng] = pick("georss:point").split(/\s+/).map(Number);
     const location = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180

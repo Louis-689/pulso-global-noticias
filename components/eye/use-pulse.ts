@@ -43,7 +43,17 @@ export function usePulse(filters: PulseFilters, live: boolean) {
     if (filters.country) params.set("country", filters.country);
     if (filters.query) params.set("q", filters.query);
     try {
-      const response = await fetch(`/api/pulse?${params}`, { signal, headers: { Accept: "application/json" } });
+      let response = await fetch(`/api/pulse?${params}`, { signal, headers: { Accept: "application/json" } });
+      // Rapidly moving through topics can briefly hit the edge's upstream
+      // concurrency guard. Retry once instead of turning that transient state
+      // into a misleading zero-news screen.
+      if (response.status === 429) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(resolve, 1800);
+          signal?.addEventListener("abort", () => { window.clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+        });
+        response = await fetch(`/api/pulse?${params}`, { signal, headers: { Accept: "application/json" } });
+      }
       if (!response.ok) throw new Error(String(response.status));
       const result = await response.json() as PulseResponse;
       if (requestRef.current !== requestId) return;

@@ -95,7 +95,31 @@ function errorMessage(error: unknown): string {
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
 }
-type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string };
+type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string; filterToTopic?: boolean };
+const CATEGORY_TERMS: Record<Exclude<PulseCategory, "all">, string[]> = {
+  politics: ["politic", "gobiern", "government", "president", "ministro", "elecci", "diploma", "parlament", "congreso", "kremlin"],
+  economy: ["econom", "mercad", "market", "inflaci", "inflation", "comerci", "trade", "banco", "bank", "empresa", "business"],
+  technology: ["tecnolog", "technology", "inteligencia artificial", "artificial intelligence", "ciber", "cyber", "software", "robot", "chip"],
+  science: ["ciencia", "science", "investig", "research", "espacio", "space", "nasa", "estudio", "study"],
+  health: ["salud", "health", "medic", "hospital", "virus", "vacun", "epidem", "outbreak", "enfermed"],
+  climate: ["clima", "climate", "ambient", "environment", "inund", "flood", "sequia", "drought", "incend", "temperatur"],
+  security: ["conflict", "conflicto", "seguridad", "security", "guerra", "war", "militar", "ataque", "attack", "misil"],
+  culture: ["cultura", "culture", "arte", "art", "cine", "film", "music", "musica", "festival", "libro"],
+  sports: ["deporte", "sport", "futbol", "football", "tenis", "tennis", "liga", "tournament", "campeon"],
+  education: ["educa", "school", "escuela", "universidad", "university", "estudiante", "student", "docente", "teacher"],
+};
+function topicMatches(title: string, category: PulseCategory): boolean {
+  if (category === "all") return true;
+  const folded = title.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+  return CATEGORY_TERMS[category].some((term) => folded.includes(term));
+}
+const RT_FEED: NewsRssFeed = {
+  name: "RT en Español · fuente estatal rusa",
+  url: "https://actualidad.rt.com/feeds/all.rss",
+  homeUrl: "https://actualidad.rt.com/",
+  note: "RSS público de RT en Español, medio financiado por el Estado ruso. Se muestra como perspectiva de esa fuente, no como confirmación independiente; contrasta sus afirmaciones con otras coberturas.",
+  filterToTopic: true,
+};
 const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
   all: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
   politics: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
@@ -128,6 +152,10 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
     { code: "BR", name: "Google News · Brasil", hl: "pt-BR", gl: "BR", ceid: "BR:pt-419" },
     { code: "FR", name: "Google News · Francia", hl: "fr", gl: "FR", ceid: "FR:fr" },
     { code: "IN", name: "Google News · India", hl: "en-IN", gl: "IN", ceid: "IN:en" },
+    { code: "DE", name: "Google News · Alemania", hl: "de", gl: "DE", ceid: "DE:de" },
+    { code: "JP", name: "Google News · Japón", hl: "ja", gl: "JP", ceid: "JP:ja" },
+    { code: "ZA", name: "Google News · África austral", hl: "en-ZA", gl: "ZA", ceid: "ZA:en" },
+    { code: "EG", name: "Google News · Mundo árabe", hl: "ar", gl: "EG", ceid: "EG:ar" },
   ];
   if (country && !editions.some((edition) => edition.code === request.country)) {
     editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en` });
@@ -144,6 +172,10 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
   }));
   const bbc = BBC_FEEDS[request.category];
   rss.push({ name: bbc.name, url: bbc.url, homeUrl: "https://www.bbc.com/news", note: "Canal RSS público de BBC. Sus miniaturas se muestran como multimedia de la fuente y conservan el enlace al artículo original." });
+  // Include viewpoints that may be restricted in some jurisdictions whenever
+  // their public feed is legally reachable from the deployment. Availability
+  // can still vary by network or region and is reported in the source panel.
+  rss.push(RT_FEED);
   return { gdelt: gdeltQuery ? `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}` : null, rss };
 }
 export async function loadNews(request: PulseRequest, now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
@@ -159,7 +191,11 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
       })
       : Promise.reject(new Error(urls.gdelt ? "GDELT en espera" : "GDELT omitido")),
     ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher, 4_500)
-      .then((text) => filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" }), request.timespan, now))),
+      .then((text) => {
+        const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" });
+        const scoped = feed.filterToTopic ? normalized.filter((article) => topicMatches(article.title, request.category)) : normalized;
+        return filterTimeAndDedupe(scoped, request.timespan, now);
+      })),
   ]);
   const gathered: PulseArticle[] = [];
   if (gdelt.status === "fulfilled") {
@@ -187,7 +223,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
       sources.push({ name: feed.name, url: feed.homeUrl, status: result.value.length ? "ok" : "empty", count: result.value.length, note: feed.note });
     } else {
       const note = errorMessage(result.reason); errors.push(`${feed.name}: ${note}`);
-      sources.push({ name: feed.name, url: "https://news.google.com/", status: "error", count: 0, note });
+      sources.push({ name: feed.name, url: feed.homeUrl, status: "error", count: 0, note });
     }
   });
   // Keep the view bounded while reserving room for source-provided multimedia.
@@ -260,6 +296,6 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
     coverageNote: request.mode === "early"
       ? "Fuentes públicas directas: sismos M2,5+ (USGS), alertas GDACS, publicaciones NASA e investigación en IA (arXiv). Son señales oficiales que pueden actualizarse; no predicen acontecimientos."
-      : `Muestra combinada de hasta 216 titulares multilingües: GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones de Google News y BBC News. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo: cada titular enlaza su origen.`,
+      : `Muestra combinada de hasta 216 titulares multilingües: GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones de Google News, BBC y RT en Español. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo ni una validación automática: cada titular enlaza su origen.`,
   };
 }
