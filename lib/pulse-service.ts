@@ -218,14 +218,18 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
       : "Portada viva de la edición regional: titulares principales actualizados continuamente.",
     timeoutMs: 3_000,
   }));
+  const guardianSection: Record<PulseCategory, string> = {
+    all: "world", politics: "politics", economy: "business", technology: "technology", science: "science",
+    health: "society/health", climate: "environment/climate-crisis", security: "world", culture: "culture",
+    sports: "sport", education: "education",
+  };
   const directFeeds: NewsRssFeed[] = [
     { name: "Al Jazeera English", url: "https://www.aljazeera.com/xml/rss/all.xml", homeUrl: "https://www.aljazeera.com/", note: "Canal RSS público directo de Al Jazeera English.", timeoutMs: 5_000 },
-    { name: "DW", url: "https://rss.dw.com/rdf/rss-en-all", homeUrl: "https://www.dw.com/", note: "Canal RSS público directo de Deutsche Welle.", timeoutMs: 5_000 },
     { name: "NPR · World", url: "https://feeds.npr.org/1004/rss.xml", homeUrl: "https://www.npr.org/sections/world/", note: "Canal RSS público directo de NPR World.", timeoutMs: 5_000 },
-    { name: "The Guardian · World", url: "https://www.theguardian.com/world/rss", homeUrl: "https://www.theguardian.com/world", note: "Canal RSS público directo de The Guardian World.", timeoutMs: 5_000 },
+    { name: `The Guardian · ${request.category}`, url: `https://www.theguardian.com/${guardianSection[request.category]}/rss`, homeUrl: `https://www.theguardian.com/${guardianSection[request.category]}`, note: "Canal RSS temático directo de The Guardian.", timeoutMs: 5_000, filterToTopic: false },
     { name: "UN News", url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml", homeUrl: "https://news.un.org/", note: "Canal RSS público de Noticias ONU; es una fuente institucional.", timeoutMs: 5_000 },
     { name: "France 24 English", url: "https://www.france24.com/en/rss", homeUrl: "https://www.france24.com/en/", note: "Canal RSS público directo de France 24 English.", timeoutMs: 5_000 },
-  ].map((feed) => ({ ...feed, filterToTopic: request.category !== "all" }));
+  ].map((feed) => ({ ...feed, filterToTopic: feed.filterToTopic ?? request.category !== "all" }));
   const rss: NewsRssFeed[] = [...directFeeds, ...googleFeeds];
   const bbc = BBC_FEEDS[request.category];
   rss.push({
