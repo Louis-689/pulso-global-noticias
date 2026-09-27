@@ -1,5 +1,7 @@
 # Pulso Global
 
+Proyecto creado y dirigido por **Luis Alejandro Cava Vassi ([Louis-689](https://github.com/Louis-689))**. Desarrollo realizado con asistencia de herramientas de IA.
+
 Atlas geoespacial de noticias y señales públicas recientes. La interfaz combina un globo 3D, un lector multimedia, búsqueda por país/ciudad/pueblo, conexiones documentadas, fuentes contrastables y rankings explicables.
 
 ## Qué hace hoy
