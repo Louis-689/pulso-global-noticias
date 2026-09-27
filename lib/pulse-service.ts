@@ -115,6 +115,20 @@ export async function fetchProviderText(
     return boundedFetchText(url, expected, fetcher, retryTimeoutMs);
   }
 }
+
+async function settleLimited<T, R>(items: T[], concurrency: number, task: (item: T, index: number) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      try { results[index] = { status: "fulfilled", value: await task(items[index], index) }; }
+      catch (reason) { results[index] = { status: "rejected", reason }; }
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) return "La fuente devolvió datos inválidos";
   return error instanceof Error && /^(HTTP \d{3}|Formato de respuesta inesperado|Respuesta demasiado grande|Respuesta vacía|RSS inválido|La fuente superó el tiempo de espera|GDELT en espera|GDELT omitido)$/.test(error.message) ? error.message : "No se pudo conectar con la fuente";
@@ -217,7 +231,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const urls = newsUrls(request);
   const sources: PulseSource[] = [];
   const errors: string[] = [];
-  const [gdelt, ...rssResults] = await Promise.allSettled([
+  const gdeltTask = Promise.allSettled([
     urls.gdelt && now >= gdeltCooldownUntil
       ? fetchProviderText(urls.gdelt, "json", fetcher, 6_000, 9_000).then((text) => {
         const data: unknown = JSON.parse(text);
@@ -225,13 +239,16 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
         return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
       })
       : Promise.reject(new Error(urls.gdelt ? "GDELT en espera" : "GDELT omitido")),
-    ...urls.rss.map((feed) => fetchProviderText(feed.url, "xml", fetcher, 4_500, 7_500)
+  ]).then(([result]) => result);
+  // Remote providers throttle bursts from shared edge addresses. A small pool
+  // preserves global coverage without making every edition fail at once.
+  const rssTask = settleLimited(urls.rss, 4, (feed) => boundedFetchText(feed.url, "xml", fetcher, 5_000)
       .then((text) => {
         const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" });
         const scoped = feed.filterToTopic ? normalized.filter((article) => topicMatches(article.title, request.category)) : normalized;
         return filterTimeAndDedupe(scoped, request.timespan, now);
-      })),
-  ]);
+      }));
+  const [gdelt, rssResults] = await Promise.all([gdeltTask, rssTask]);
   const gathered: PulseArticle[] = [];
   if (gdelt.status === "fulfilled") {
     gathered.push(...gdelt.value);
