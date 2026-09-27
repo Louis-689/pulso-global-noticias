@@ -82,11 +82,38 @@ async function cached(key: string, task: () => Promise<ProviderResult>, now: num
   starts.push(now);
   const promise = task().then((value) => {
     if (cache.size >= 64) cache.delete(cache.keys().next().value!);
-    cache.set(key, { value, expires: Date.now() + (value.articles.length ? 90_000 : 30_000) });
+    // A simultaneous provider timeout must not poison the shared cache with a
+    // convincing-looking empty result. Genuine empty windows are still cached
+    // briefly, while successful samples remain stable between polling cycles.
+    const transientEmpty = !value.articles.length && value.errors.length > 0;
+    cache.set(key, { value, expires: Date.now() + (value.articles.length ? 90_000 : transientEmpty ? 4_000 : 15_000) });
     return value;
   }).finally(() => inFlight.delete(key));
   inFlight.set(key, promise);
   return promise;
+}
+
+function retryableProviderError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (/^(Formato de respuesta inesperado|Respuesta demasiado grande|Respuesta vacía|RSS inválido|Redirección rechazada|HTTP 4\d\d)$/.test(message)) return false;
+  return true;
+}
+
+export async function fetchProviderText(
+  url: string,
+  expected: "json" | "xml",
+  fetcher: FetchLike = fetch,
+  firstTimeoutMs = 5_000,
+  retryTimeoutMs = 8_000,
+): Promise<string> {
+  try {
+    return await boundedFetchText(url, expected, fetcher, firstTimeoutMs);
+  } catch (error) {
+    if (!retryableProviderError(error)) throw error;
+    // One bounded retry absorbs cold DNS/TLS starts without hiding persistent
+    // outages or multiplying requests indefinitely.
+    return boundedFetchText(url, expected, fetcher, retryTimeoutMs);
+  }
 }
 function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) return "La fuente devolvió datos inválidos";
@@ -192,13 +219,13 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const errors: string[] = [];
   const [gdelt, ...rssResults] = await Promise.allSettled([
     urls.gdelt && now >= gdeltCooldownUntil
-      ? boundedFetchText(urls.gdelt, "json", fetcher, 6_000).then((text) => {
+      ? fetchProviderText(urls.gdelt, "json", fetcher, 6_000, 9_000).then((text) => {
         const data: unknown = JSON.parse(text);
         if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
         return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
       })
       : Promise.reject(new Error(urls.gdelt ? "GDELT en espera" : "GDELT omitido")),
-    ...urls.rss.map((feed) => boundedFetchText(feed.url, "xml", fetcher, 4_500)
+    ...urls.rss.map((feed) => fetchProviderText(feed.url, "xml", fetcher, 4_500, 7_500)
       .then((text) => {
         const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" });
         const scoped = feed.filterToTopic ? normalized.filter((article) => topicMatches(article.title, request.category)) : normalized;
@@ -266,7 +293,7 @@ const EARLY_FEEDS = [
 ] as const;
 export async function loadEarly(now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
   const settled = await Promise.allSettled(EARLY_FEEDS.map(async (feed) => {
-    const text = await boundedFetchText(feed.url, feed.format, fetcher);
+    const text = await fetchProviderText(feed.url, feed.format, fetcher, 7_000, 10_000);
     const articles = feed.kind === "earthquake" ? parseEarthquakes(JSON.parse(text)) : normalizeMany(parseRssItems(text), { provider: feed.name, sourceName: feed.name, kind: feed.kind, timestampBasis: "published", reviewStatus: feed.reviewStatus })
       .filter((article) => feed.hosts.some((host) => article.destinationHost === host || article.destinationHost.endsWith(`.${host}`)));
     return filterTimeAndDedupe(articles, "7d", now);

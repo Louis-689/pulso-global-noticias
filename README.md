@@ -11,7 +11,7 @@ Atlas geoespacial de noticias y señales públicas recientes. La interfaz combin
 - Muestra imágenes o video únicamente cuando el feed de origen los entrega.
 - Ubica en el mapa solo coordenadas publicadas o países mencionados explícitamente.
 - Permite filtrar por tema, país, localidad, periodo, multimedia y ubicación.
-- Ofrece Top 10 de impulso/presión por día, semana, mes o año sobre la muestra recuperada.
+- Ofrece Top 10 de impulso/presión por día o semana sobre la muestra realmente recuperada. Mes y año quedan reservados para una futura base histórica continua; no se simulan con una portada reciente.
 - Admite guardado local, briefing por voz, avisos opt-in mientras la aplicación está activa y modo instalable PWA.
 - Incluye cliente de escritorio aislado para Windows y flujos de compilación para macOS/Linux.
 
@@ -36,7 +36,7 @@ npm run build
 
 ## Aplicación de escritorio
 
-El cliente Electron abre la versión publicada con `contextIsolation`, sandbox, Node desactivado, permisos denegados y enlaces externos fuera de la aplicación.
+El cliente Electron abre la versión publicada con `contextIsolation`, sandbox, Node desactivado y enlaces externos fuera de la aplicación. Solo admite notificaciones originadas por Pulso Global; cámara, micrófono, ubicación y los demás permisos web permanecen denegados.
 
 ```sh
 cd desktop

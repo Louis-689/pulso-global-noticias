@@ -22,8 +22,10 @@ const CATEGORIES: Array<{ group: string; items: Array<[PulseCategory, string]> }
   { group: "Sociedad", items: [["climate", "Clima"], ["culture", "Cultura"], ["sports", "Deportes"]] },
 ];
 const EARLY_CATEGORIES = new Set<PulseCategory>(["all", "science", "technology"]);
-const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "1 hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"], ["30d", "30 días"], ["365d", "1 año"]];
-const RANKING_WINDOWS: Array<[PulseTimespan, string]> = [["24h", "Día"], ["7d", "Semana"], ["30d", "Mes"], ["365d", "Año"]];
+const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "1 hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
+// Rankings must describe the data actually retained. Month/year controls were
+// misleading because this release has no persistent historical warehouse yet.
+const RANKING_WINDOWS: Array<[PulseTimespan, string]> = [["24h", "Día"], ["7d", "Semana"]];
 type FeedMode = "latest" | "media" | "located" | "saved";
 type SortMode = "newest" | "coverage" | "signal";
 type MapMode = "realistic" | "illustrated" | "flat";
@@ -543,6 +545,7 @@ export function GlobalEye() {
           {RANKING_WINDOWS.map(([id, label]) => <button key={id} aria-pressed={timespan === id} className={timespan === id ? "active" : ""} onClick={() => setTimespan(id)}>{label}</button>)}
         </div>
         <p className="ranking-sample">{loading ? "Actualizando periodo…" : `${data?.stats.total ?? 0} registros recuperados · ${data?.sources.filter((source) => source.status === "ok").length ?? 0} fuentes activas`}</p>
+        <p className="ranking-sample">Mes y año aparecerán cuando exista un archivo histórico continuo. Pulso Global no presenta una portada reciente como si fuera historia completa.</p>
         <div className="rankings-grid">
           <section><h3>10 señales de impulso</h3>{data?.rankings.positive.length ? data.rankings.positive.map((article, index) => <button key={article.id} onClick={() => { setRankingsOpen(false); openArticle(article); }}><b>{index + 1}</b><span>{article.title}<small>{sourceLabel(article)}</small></span></button>) : <p>Sin coincidencias positivas en esta muestra.</p>}</section>
           <section><h3>10 señales de presión</h3>{data?.rankings.negative.length ? data.rankings.negative.map((article, index) => <button key={article.id} onClick={() => { setRankingsOpen(false); openArticle(article); }}><b>{index + 1}</b><span>{article.title}<small>{sourceLabel(article)}</small></span></button>) : <p>Sin coincidencias de presión en esta muestra.</p>}</section>

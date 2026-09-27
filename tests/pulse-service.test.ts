@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundedFetchText, newsUrls, parsePulseRequest } from "../lib/pulse-service";
+import { boundedFetchText, fetchProviderText, newsUrls, parsePulseRequest } from "../lib/pulse-service";
 
 test("parsePulseRequest aplica listas permitidas y sanea búsqueda", () => {
   const request = parsePulseRequest(new URLSearchParams({ category: "invalid", timespan: "year", mode: "private", country: "xx", q: `  clima\u0000 <script> ${"x".repeat(150)}` }));
@@ -27,4 +27,25 @@ test("boundedFetchText valida tipo y tamaño antes de procesar", async () => {
   await assert.rejects(() => boundedFetchText("https://example.com/data", "json", wrong), /Formato/);
   const redirect: typeof fetch = async () => new Response(null, { status: 302, headers: { location: "https://other.example/" } });
   await assert.rejects(() => boundedFetchText("https://example.com/data", "json", redirect), /Redirección/);
+});
+
+test("fetchProviderText reintenta una caída transitoria una sola vez", async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response("temporal", { status: 503, headers: { "content-type": "text/plain" } });
+    return new Response("<rss><channel></channel></rss>", { headers: { "content-type": "application/rss+xml" } });
+  };
+  assert.match(await fetchProviderText("https://example.com/feed", "xml", fetcher, 50, 50), /<rss>/);
+  assert.equal(calls, 2);
+});
+
+test("fetchProviderText no reintenta formatos inválidos", async () => {
+  let calls = 0;
+  const fetcher: typeof fetch = async () => {
+    calls += 1;
+    return new Response("<html/>", { headers: { "content-type": "text/html" } });
+  };
+  await assert.rejects(() => fetchProviderText("https://example.com/feed", "xml", fetcher, 50, 50), /Formato/);
+  assert.equal(calls, 1);
 });

@@ -40,7 +40,15 @@ function createWindow() {
 
 app.setAppUserModelId("com.pulsoglobal.desktop");
 app.whenReady().then(() => {
-  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  const permissionAllowed = (webContents, permission) => {
+    if (permission !== "notifications") return false;
+    try { return new URL(webContents.getURL()).origin === APP_ORIGIN; }
+    catch { return false; }
+  };
+  // Only first-party notifications are allowed. Camera, microphone,
+  // geolocation, MIDI and every other web permission stay denied.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => callback(permissionAllowed(webContents, permission)));
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => permissionAllowed(webContents, permission));
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
