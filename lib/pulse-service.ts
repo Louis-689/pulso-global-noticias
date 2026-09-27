@@ -136,7 +136,7 @@ function errorMessage(error: unknown): string {
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
 }
-type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string; filterToTopic?: boolean };
+type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string; filterToTopic?: boolean; timeoutMs?: number };
 const CATEGORY_TERMS: Record<Exclude<PulseCategory, "all">, string[]> = {
   politics: ["politic", "gobiern", "government", "president", "ministro", "elecci", "diploma", "parlament", "congreso", "kremlin"],
   economy: ["econom", "mercad", "market", "inflaci", "inflation", "comerci", "trade", "banco", "bank", "empresa", "business"],
@@ -201,7 +201,13 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
   if (country && !editions.some((edition) => edition.code === request.country)) {
     editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en` });
   }
-  const rss: NewsRssFeed[] = editions.map((edition) => ({
+  // Search requests use a geographically diverse subset: direct publisher
+  // feeds below provide the remaining redundancy without hammering eleven
+  // Google endpoints from the same shared edge address.
+  const selectedEditions = rssQuery
+    ? editions.filter((edition) => ["PE", "US", "BR", "FR", "IN", "EG", request.country].includes(edition.code))
+    : editions;
+  const googleFeeds: NewsRssFeed[] = selectedEditions.map((edition) => ({
     name: edition.name,
     url: rssQuery
       ? `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`
@@ -210,7 +216,17 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
     note: rssQuery
       ? "Búsqueda por tema y lugar en la edición regional. Los enlaces pasan por Google News; la hora la comunica el propio feed."
       : "Portada viva de la edición regional: titulares principales actualizados continuamente.",
+    timeoutMs: 3_000,
   }));
+  const directFeeds: NewsRssFeed[] = [
+    { name: "Al Jazeera English", url: "https://www.aljazeera.com/xml/rss/all.xml", homeUrl: "https://www.aljazeera.com/", note: "Canal RSS público directo de Al Jazeera English.", timeoutMs: 5_000 },
+    { name: "DW", url: "https://rss.dw.com/rdf/rss-en-all", homeUrl: "https://www.dw.com/", note: "Canal RSS público directo de Deutsche Welle.", timeoutMs: 5_000 },
+    { name: "NPR · World", url: "https://feeds.npr.org/1004/rss.xml", homeUrl: "https://www.npr.org/sections/world/", note: "Canal RSS público directo de NPR World.", timeoutMs: 5_000 },
+    { name: "The Guardian · World", url: "https://www.theguardian.com/world/rss", homeUrl: "https://www.theguardian.com/world", note: "Canal RSS público directo de The Guardian World.", timeoutMs: 5_000 },
+    { name: "UN News", url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml", homeUrl: "https://news.un.org/", note: "Canal RSS público de Noticias ONU; es una fuente institucional.", timeoutMs: 5_000 },
+    { name: "France 24 English", url: "https://www.france24.com/en/rss", homeUrl: "https://www.france24.com/en/", note: "Canal RSS público directo de France 24 English.", timeoutMs: 5_000 },
+  ].map((feed) => ({ ...feed, filterToTopic: request.category !== "all" }));
+  const rss: NewsRssFeed[] = [...directFeeds, ...googleFeeds];
   const bbc = BBC_FEEDS[request.category];
   rss.push({
     name: bbc.name,
@@ -233,7 +249,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   const errors: string[] = [];
   const gdeltTask = Promise.allSettled([
     urls.gdelt && now >= gdeltCooldownUntil
-      ? fetchProviderText(urls.gdelt, "json", fetcher, 6_000, 9_000).then((text) => {
+      ? boundedFetchText(urls.gdelt, "json", fetcher, 5_000).then((text) => {
         const data: unknown = JSON.parse(text);
         if (!data || typeof data !== "object" || !Array.isArray((data as { articles?: unknown }).articles)) throw new SyntaxError();
         return filterTimeAndDedupe(normalizeMany((data as { articles: unknown[] }).articles, { provider: "GDELT", timestampBasis: "observed" }), request.timespan, now);
@@ -242,7 +258,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   ]).then(([result]) => result);
   // Remote providers throttle bursts from shared edge addresses. A small pool
   // preserves global coverage without making every edition fail at once.
-  const rssTask = settleLimited(urls.rss, 4, (feed) => boundedFetchText(feed.url, "xml", fetcher, 5_000)
+  const rssTask = settleLimited(urls.rss, 4, (feed) => boundedFetchText(feed.url, "xml", fetcher, feed.timeoutMs ?? 5_000)
       .then((text) => {
         const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" });
         const scoped = feed.filterToTopic ? normalized.filter((article) => topicMatches(article.title, request.category)) : normalized;
@@ -348,6 +364,6 @@ export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
     fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
     coverageNote: request.mode === "early"
       ? "Fuentes públicas directas: sismos M2,5+ (USGS), alertas GDACS, publicaciones NASA e investigación en IA (arXiv). Son señales oficiales que pueden actualizarse; no predicen acontecimientos."
-      : `Muestra combinada de hasta 216 titulares multilingües: GDELT, ${sources.filter((source) => source.name.startsWith("Google News")).length} ediciones de Google News, BBC y RT en Español. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo ni una validación automática: cada titular enlaza su origen.`,
+      : `Muestra combinada de hasta 216 titulares multilingües: índices regionales y canales RSS directos de medios y organismos internacionales. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo ni una validación automática: cada titular enlaza su origen.`,
   };
 }

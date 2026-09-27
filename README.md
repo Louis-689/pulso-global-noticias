@@ -6,7 +6,7 @@ Atlas geoespacial de noticias y señales públicas recientes. La interfaz combin
 
 ## Qué hace hoy
 
-- Reúne titulares públicos de GDELT, 11 ediciones regionales de Google News, BBC y RT en Español.
+- Reúne titulares públicos de GDELT, ediciones regionales de Google News, BBC, RT en Español y canales directos de Al Jazeera, DW, NPR, The Guardian, Noticias ONU y France 24.
 - Separa noticias de señales tempranas públicas: USGS, GDACS, NASA y arXiv.
 - Muestra imágenes o video únicamente cuando el feed de origen los entrega.
 - Ubica en el mapa solo coordenadas publicadas o países mencionados explícitamente.
