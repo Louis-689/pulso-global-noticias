@@ -160,7 +160,7 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
   if (country && !editions.some((edition) => edition.code === request.country)) {
     editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en` });
   }
-  const rss = editions.map((edition) => ({
+  const rss: NewsRssFeed[] = editions.map((edition) => ({
     name: edition.name,
     url: rssQuery
       ? `https://news.google.com/rss/search?${new URLSearchParams({ q: rssQuery, hl: edition.hl, gl: edition.gl, ceid: edition.ceid })}`
@@ -171,7 +171,15 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
       : "Portada viva de la edición regional: titulares principales actualizados continuamente.",
   }));
   const bbc = BBC_FEEDS[request.category];
-  rss.push({ name: bbc.name, url: bbc.url, homeUrl: "https://www.bbc.com/news", note: "Canal RSS público de BBC. Sus miniaturas se muestran como multimedia de la fuente y conservan el enlace al artículo original." });
+  rss.push({
+    name: bbc.name,
+    url: bbc.url,
+    homeUrl: "https://www.bbc.com/news",
+    note: "Canal RSS público de BBC. Sus miniaturas se muestran como multimedia de la fuente y conservan el enlace al artículo original.",
+    // World feeds stand in for categories without a dedicated BBC channel.
+    // Filter them locally so Política, Seguridad and Educación remain coherent.
+    filterToTopic: request.category !== "all" && ["politics", "security", "education"].includes(request.category),
+  });
   // Include viewpoints that may be restricted in some jurisdictions whenever
   // their public feed is legally reachable from the deployment. Availability
   // can still vary by network or region and is reported in the source panel.

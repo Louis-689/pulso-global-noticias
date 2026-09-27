@@ -80,7 +80,7 @@ export function parseTimestamp(value: unknown): string | null {
 }
 
 export function inTimeWindow(timestamp: string, timespan: PulseTimespan, now: number): boolean {
-  const milliseconds = timespan === "7d" ? 7 * 86400000 : Number(timespan.slice(0, -1)) * 3600000;
+  const milliseconds = timespan.endsWith("d") ? Number(timespan.slice(0, -1)) * 86400000 : Number(timespan.slice(0, -1)) * 3600000;
   const time = Date.parse(timestamp);
   return Number.isFinite(time) && time >= now - milliseconds && time <= now;
 }

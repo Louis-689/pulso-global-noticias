@@ -1,9 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { InstallAppButton } from "@/components/pwa-register";
 import { countries } from "@/lib/pulse-geography";
 import type { PlaceResult, PlacesResponse } from "@/lib/pulse-places-types";
 import type { PulseArticle, PulseCategory, PulseConnection, PulseMode, PulseTimespan } from "@/lib/pulse-types";
@@ -21,7 +22,8 @@ const CATEGORIES: Array<{ group: string; items: Array<[PulseCategory, string]> }
   { group: "Sociedad", items: [["climate", "Clima"], ["culture", "Cultura"], ["sports", "Deportes"]] },
 ];
 const EARLY_CATEGORIES = new Set<PulseCategory>(["all", "science", "technology"]);
-const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "1 hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"]];
+const WINDOWS: Array<[PulseTimespan, string]> = [["1h", "1 hora"], ["6h", "6 horas"], ["12h", "12 horas"], ["24h", "24 horas"], ["48h", "48 horas"], ["7d", "7 días"], ["30d", "30 días"], ["365d", "1 año"]];
+const RANKING_WINDOWS: Array<[PulseTimespan, string]> = [["24h", "Día"], ["7d", "Semana"], ["30d", "Mes"], ["365d", "Año"]];
 type FeedMode = "latest" | "media" | "located" | "saved";
 type SortMode = "newest" | "coverage" | "signal";
 type MapMode = "realistic" | "illustrated" | "flat";
@@ -56,7 +58,11 @@ export function GlobalEye() {
   const [focusedArticleId, setFocusedArticleId] = useState("");
   const [resetKey, setResetKey] = useState(0);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [methodOpen, setMethodOpen] = useState(false);
+  const [rankingsOpen, setRankingsOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted" && localStorage.getItem("pulso-notifications") === "on");
   const [visiblePage, setVisiblePage] = useState({ key: "", count: 30 });
   const searchRef = useRef<HTMLInputElement>(null);
   const placeRequestRef = useRef(0);
@@ -80,11 +86,15 @@ export function GlobalEye() {
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
-    if (!mapExpanded) return;
-    const closeExpandedMap = (event: KeyboardEvent) => { if (event.key === "Escape") setMapExpanded(false); };
-    window.addEventListener("keydown", closeExpandedMap);
-    return () => window.removeEventListener("keydown", closeExpandedMap);
-  }, [mapExpanded]);
+    if (!mapExpanded && !mobileFiltersOpen) return;
+    const closeOverlay = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMapExpanded(false);
+      setMobileFiltersOpen(false);
+    };
+    window.addEventListener("keydown", closeOverlay);
+    return () => window.removeEventListener("keydown", closeOverlay);
+  }, [mapExpanded, mobileFiltersOpen]);
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   const articles = useMemo(() => data?.articles ?? [], [data?.articles]);
@@ -148,6 +158,7 @@ export function GlobalEye() {
     setSearchDraft(place.name);
     setQuery(place.name);
     setMode("news");
+    setMobileFiltersOpen(false);
   }
   function clearLocation() {
     cancelPlaceSearch();
@@ -171,6 +182,7 @@ export function GlobalEye() {
     cancelPlaceSearch();
     setCategory(nextCategory);
     setFeedMode("latest");
+    setMobileFiltersOpen(false);
     // A town search is intentionally narrow and was previously carried into
     // every topic without a visible explanation, often producing an apparent
     // all-zero dashboard. Topic navigation returns to the selected country (or
@@ -193,6 +205,7 @@ export function GlobalEye() {
     setPlaceDraft("");
     setPlaceResults([]);
     setPlaceMessage("");
+    setMobileFiltersOpen(false);
   }
   function focusArticleOnMap(article: PulseArticle) {
     setFocusedArticleId(article.id);
@@ -225,6 +238,18 @@ export function GlobalEye() {
     window.speechSynthesis.speak(utterance);
     setSpeaking(true);
   }
+  function handleFeedTabs(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const order: FeedMode[] = ["latest", "media", "located", "saved"];
+    const current = Math.max(0, order.indexOf(feedMode));
+    const next = event.key === "Home" ? 0 : event.key === "End" ? order.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + order.length) % order.length;
+    const nextMode = order[next];
+    const group = event.currentTarget;
+    setFeedMode(nextMode);
+    window.requestAnimationFrame(() => group.querySelector<HTMLButtonElement>(`[data-feed-mode="${nextMode}"]`)?.focus());
+  }
   const title = selectedPlace?.displayName || countryName || (mode === "early" ? "Señales tempranas" : categoryLabel(category));
   const leadArticle = visibleArticles.find((article) => article.media) ?? visibleArticles[0];
   const remainingArticles = visibleArticles.filter((article) => article.id !== leadArticle?.id);
@@ -232,6 +257,30 @@ export function GlobalEye() {
   const statusLabel = loading ? "Actualizando" : error ? "Sin conexión" : data?.partial ? "Cobertura parcial" : "En vivo";
   const okSources = data?.sources.filter((source) => source.status === "ok") ?? [];
   const unavailable = !!error && !data?.sources.length;
+
+  useEffect(() => {
+    if (!notificationsEnabled || !freshIds.size || !("Notification" in window) || Notification.permission !== "granted") return;
+    const newest = articles.find((article) => freshIds.has(article.id));
+    if (!newest) return;
+    const notification = new Notification(newest.kind === "earthquake" ? "Alerta sísmica detectada" : "Nueva señal en Pulso Global", {
+      body: newest.title, icon: "/favicon.svg", tag: newest.id,
+    });
+    notification.onclick = () => { window.focus(); setFocusedArticleId(newest.id); setSelectedArticle(newest); notification.close(); };
+  }, [articles, freshIds, notificationsEnabled]);
+
+  async function toggleNotifications() {
+    if (!("Notification" in window)) return;
+    if (notificationsEnabled) {
+      localStorage.removeItem("pulso-notifications");
+      setNotificationsEnabled(false);
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    if (permission === "granted") {
+      localStorage.setItem("pulso-notifications", "on");
+      setNotificationsEnabled(true);
+    }
+  }
 
   return <main className="eye-console">
     <header className="eye-header">
@@ -256,10 +305,14 @@ export function GlobalEye() {
         <button className="header-button" onClick={() => void refresh()} disabled={loading} aria-label="Actualizar fuentes" title="Actualizar ahora">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={loading ? "spin" : ""}><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
         </button>
+        <button className="mobile-filter-button" onClick={() => setMobileFiltersOpen((value) => !value)} aria-expanded={mobileFiltersOpen} aria-controls="eye-navigation" aria-label="Abrir filtros y temas">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+        </button>
       </div>
     </header>
 
-    <aside className="eye-rail" aria-label="Filtros y navegación">
+    {mobileFiltersOpen && <button className="rail-backdrop" aria-label="Cerrar filtros" onClick={() => setMobileFiltersOpen(false)} />}
+    <aside id="eye-navigation" className={`eye-rail${mobileFiltersOpen ? " mobile-open" : ""}`} aria-label="Filtros y navegación">
       <div className="rail-block">
         <span className="rail-label">Vista</span>
         <div className="mode-switch">
@@ -310,6 +363,11 @@ export function GlobalEye() {
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16Z" /></svg>
         Guardadas <b>{saved.length}</b>
       </button>
+      <button className="rail-action" onClick={() => { setMobileFiltersOpen(false); setRankingsOpen(true); }}>Rankings de la muestra</button>
+      <button className="rail-action" onClick={() => { setMobileFiltersOpen(false); setMethodOpen(true); }}>Misión y método</button>
+      <button className="rail-action" onClick={() => void toggleNotifications()} aria-pressed={notificationsEnabled}>{notificationsEnabled ? "Avisos activados" : "Activar avisos en vivo"}</button>
+      <a className="rail-action download-action" href="https://github.com/Louis-689/pulso-global-noticias/releases/latest/download/Pulso-Global-Windows.exe">Descargar para Windows</a>
+      <InstallAppButton />
     </aside>
 
     <section className={`eye-workspace${mapExpanded ? " map-focus" : ""}`}>
@@ -388,13 +446,13 @@ export function GlobalEye() {
               </select>
             </div>
           </div>
-          <div className="feed-tabs" role="tablist">
-            <button role="tab" aria-selected={feedMode === "latest"} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button>
-            <button role="tab" aria-selected={feedMode === "media"} className={feedMode === "media" ? "active" : ""} onClick={() => setFeedMode("media")}>Multimedia</button>
-            <button role="tab" aria-selected={feedMode === "located"} className={feedMode === "located" ? "active" : ""} onClick={() => setFeedMode("located")}>En el mapa</button>
-            <button role="tab" aria-selected={feedMode === "saved"} className={feedMode === "saved" ? "active" : ""} onClick={() => setFeedMode("saved")}>Guardadas</button>
+          <div className="feed-tabs" role="tablist" aria-label="Vista de titulares" onKeyDown={handleFeedTabs}>
+            <button id="feed-tab-latest" data-feed-mode="latest" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "latest"} tabIndex={feedMode === "latest" ? 0 : -1} className={feedMode === "latest" ? "active" : ""} onClick={() => setFeedMode("latest")}>Recientes</button>
+            <button id="feed-tab-media" data-feed-mode="media" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "media"} tabIndex={feedMode === "media" ? 0 : -1} className={feedMode === "media" ? "active" : ""} onClick={() => setFeedMode("media")}>Multimedia</button>
+            <button id="feed-tab-located" data-feed-mode="located" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "located"} tabIndex={feedMode === "located" ? 0 : -1} className={feedMode === "located" ? "active" : ""} onClick={() => setFeedMode("located")}>En el mapa</button>
+            <button id="feed-tab-saved" data-feed-mode="saved" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "saved"} tabIndex={feedMode === "saved" ? 0 : -1} className={feedMode === "saved" ? "active" : ""} onClick={() => setFeedMode("saved")}>Guardadas</button>
           </div>
-          <div className="feed" role="tabpanel" aria-live="polite" aria-busy={loading}>
+          <div id="pulse-feed" className="feed" role="tabpanel" aria-labelledby={`feed-tab-${feedMode}`} aria-live="polite" aria-busy={loading}>
             {loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}
             {!loading && visibleArticles.length === 0 && <div className="empty-state">
               <strong>{feedMode === "saved" ? "Todavía no guardas noticias" : unavailable ? "Fuentes momentáneamente no disponibles" : "Sin resultados para esta combinación"}</strong>
@@ -472,6 +530,42 @@ export function GlobalEye() {
           </article>)}
           {!data?.sources.length && <p className="rail-hint">{loading ? "Consultando fuentes…" : "No hay fuentes disponibles en esta vista."}</p>}
         </div>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={rankingsOpen} onOpenChange={setRankingsOpen}>
+      <DialogContent className="rankings-dialog">
+        <DialogHeader>
+          <DialogTitle>Rankings de señales</DialogTitle>
+          <DialogDescription>Top 10 exploratorio de la muestra recuperada. Cuenta vocabulario de impulso o presión; no mide verdad, importancia moral ni sentimiento humano.</DialogDescription>
+        </DialogHeader>
+        <div className="ranking-periods" role="group" aria-label="Periodo del ranking">
+          {RANKING_WINDOWS.map(([id, label]) => <button key={id} aria-pressed={timespan === id} className={timespan === id ? "active" : ""} onClick={() => setTimespan(id)}>{label}</button>)}
+        </div>
+        <p className="ranking-sample">{loading ? "Actualizando periodo…" : `${data?.stats.total ?? 0} registros recuperados · ${data?.sources.filter((source) => source.status === "ok").length ?? 0} fuentes activas`}</p>
+        <div className="rankings-grid">
+          <section><h3>10 señales de impulso</h3>{data?.rankings.positive.length ? data.rankings.positive.map((article, index) => <button key={article.id} onClick={() => { setRankingsOpen(false); openArticle(article); }}><b>{index + 1}</b><span>{article.title}<small>{sourceLabel(article)}</small></span></button>) : <p>Sin coincidencias positivas en esta muestra.</p>}</section>
+          <section><h3>10 señales de presión</h3>{data?.rankings.negative.length ? data.rankings.negative.map((article, index) => <button key={article.id} onClick={() => { setRankingsOpen(false); openArticle(article); }}><b>{index + 1}</b><span>{article.title}<small>{sourceLabel(article)}</small></span></button>) : <p>Sin coincidencias de presión en esta muestra.</p>}</section>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={methodOpen} onOpenChange={setMethodOpen}>
+      <DialogContent className="method-dialog">
+        <DialogHeader>
+          <DialogTitle>Misión y método</DialogTitle>
+          <DialogDescription>Pulso Global convierte fuentes públicas recientes en un atlas legible, trazable y honesto sobre sus límites.</DialogDescription>
+        </DialogHeader>
+        <div className="mission-seal"><strong>Misión</strong><p>Comprender el pulso humano, económico, científico y ambiental con origen, hora, geografía e incertidumbre visibles.</p></div>
+        <div className="method-steps">
+          <div><b>01</b><p><strong>Recoge</strong> titulares y señales públicas con hora rastreable.</p></div>
+          <div><b>02</b><p><strong>Distingue</strong> noticias, registros oficiales y prepublicaciones.</p></div>
+          <div><b>03</b><p><strong>Ubica</strong> solo coordenadas o lugares sustentados por la fuente.</p></div>
+          <div><b>04</b><p><strong>Relaciona</strong> países co-mencionados sin afirmar causalidad.</p></div>
+          <div><b>05</b><p><strong>Ordena</strong> la muestra sin inventar datos faltantes.</p></div>
+          <div><b>06</b><p><strong>Expone límites</strong>: publicación no equivale a verificación.</p></div>
+        </div>
+        <p className="method-limit"><strong>Visión:</strong> avanzar hacia modelos históricos con backtesting e intervalos de confianza. La versión actual no presenta una muestra instantánea como predicción.</p>
       </DialogContent>
     </Dialog>
   </main>;

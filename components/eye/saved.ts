@@ -54,7 +54,9 @@ export function isSavedArticle(value: unknown): value is PulseArticle {
     && SAVED_REVIEW_STATES.has(item.reviewStatus as PulseArticle["reviewStatus"])
     && SAVED_TIMESTAMP_BASES.has(item.timestampBasis as PulseArticle["timestampBasis"])
     && Array.isArray(item.mentionedCountries) && item.mentionedCountries.length <= 50 && item.mentionedCountries.every(isSavedCountry)
-    && typeof item.sentiment === "number" && Number.isFinite(item.sentiment) && item.sentiment >= -1 && item.sentiment <= 1
+    // lexicalTone is a term count difference, not a normalized -1..1 score.
+    // Preserve legitimate saved stories that contain several signal words.
+    && typeof item.sentiment === "number" && Number.isSafeInteger(item.sentiment) && item.sentiment >= -100 && item.sentiment <= 100
     && Array.isArray(item.positiveTerms) && item.positiveTerms.length <= 100 && item.positiveTerms.every((term) => typeof term === "string" && term.length <= 100)
     && Array.isArray(item.negativeTerms) && item.negativeTerms.length <= 100 && item.negativeTerms.every((term) => typeof term === "string" && term.length <= 100)
     && locationValid && mediaValid;

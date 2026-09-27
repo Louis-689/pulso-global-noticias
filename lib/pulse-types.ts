@@ -1,4 +1,4 @@
-export const PULSE_TIMESPANS = ["1h", "6h", "12h", "24h", "48h", "7d"] as const;
+export const PULSE_TIMESPANS = ["1h", "6h", "12h", "24h", "48h", "7d", "30d", "365d"] as const;
 export type PulseTimespan = (typeof PULSE_TIMESPANS)[number];
 export type PulseMode = "news" | "early";
 export type PulseCategory = "all" | "politics" | "economy" | "technology" | "science" | "health" | "climate" | "security" | "culture" | "sports" | "education";

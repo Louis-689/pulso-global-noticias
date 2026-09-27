@@ -1,0 +1,27 @@
+{
+  "name": "pulso-global-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cliente de escritorio de Pulso Global",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable --x64",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.pulsoglobal.desktop",
+    "productName": "Pulso Global",
+    "asar": true,
+    "files": ["main.cjs", "preload.cjs", "package.json", "assets/**/*"],
+    "directories": { "output": "release" },
+    "win": { "target": [{ "target": "portable", "arch": ["x64"] }], "artifactName": "Pulso-Global-Windows.exe", "icon": "assets/icon.png" },
+    "mac": { "target": "dmg", "artifactName": "Pulso-Global-macOS-${arch}.${ext}", "icon": "assets/icon.png" },
+    "linux": { "target": "AppImage", "artifactName": "Pulso-Global-Linux-${arch}.${ext}", "icon": "assets/icon.png", "category": "Network" }
+  }
+}
