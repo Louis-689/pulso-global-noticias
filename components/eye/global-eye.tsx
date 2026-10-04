@@ -57,6 +57,7 @@ export function GlobalEye() {
   const [showExactSignals, setShowExactSignals] = useState(true);
   const [mapMode, setMapMode] = useState<MapMode>("realistic");
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [newsExpanded, setNewsExpanded] = useState(false);
   const [focusedArticleId, setFocusedArticleId] = useState("");
   const [resetKey, setResetKey] = useState(0);
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -88,15 +89,16 @@ export function GlobalEye() {
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
-    if (!mapExpanded && !mobileFiltersOpen) return;
+    if (!mapExpanded && !newsExpanded && !mobileFiltersOpen) return;
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setMapExpanded(false);
+      setNewsExpanded(false);
       setMobileFiltersOpen(false);
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
-  }, [mapExpanded, mobileFiltersOpen]);
+  }, [mapExpanded, newsExpanded, mobileFiltersOpen]);
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   const articles = useMemo(() => data?.articles ?? [], [data?.articles]);
@@ -213,6 +215,7 @@ export function GlobalEye() {
     setFocusedArticleId(article.id);
     setSelectedArticle(null);
     setMapExpanded(false);
+    setNewsExpanded(false);
     if (window.matchMedia("(max-width: 1100px)").matches) window.requestAnimationFrame(() => document.querySelector(".map-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
   function openArticle(article: PulseArticle) {
@@ -259,6 +262,8 @@ export function GlobalEye() {
   const statusLabel = loading ? "Actualizando" : error ? "Sin conexión" : data?.partial ? "Cobertura parcial" : "En vivo";
   const okSources = data?.sources.filter((source) => source.status === "ok") ?? [];
   const unavailable = !!error && !data?.sources.length;
+  const hasActiveFilters = category !== "all" || timespan !== "24h" || mode !== "news" || !!country || !!query || !!selectedPlace;
+  const windowLabel = WINDOWS.find(([id]) => id === timespan)?.[1] || timespan;
 
   useEffect(() => {
     if (!notificationsEnabled || !freshIds.size || !("Notification" in window) || Notification.permission !== "granted") return;
@@ -325,13 +330,15 @@ export function GlobalEye() {
       </div>
       <div className="rail-block">
         <span className="rail-label">Temas</span>
-        {CATEGORIES.map((group) => <div className="rail-group" key={group.group}>
-          <span className="rail-group-label">{group.group}</span>
+        {CATEGORIES.map((group) => <details className="rail-group" key={group.group} open>
+          <summary className="rail-group-label"><span>{group.group}</span><small>{group.items.length}</small></summary>
+          <div className="topic-folder">
           {group.items.map(([id, label]) => {
             const unavailable = mode === "early" && !EARLY_CATEGORIES.has(id);
             return <button key={id} disabled={unavailable} title={unavailable ? "Las señales tempranas cubren Panorama, Ciencia y Tecnología." : undefined} className={category === id ? "topic active" : "topic"} onClick={() => selectCategory(id)}>{label}</button>;
           })}
-        </div>)}
+          </div>
+        </details>)}
       </div>
       <div className="rail-block">
         <span className="rail-label">Filtros</span>
@@ -372,8 +379,8 @@ export function GlobalEye() {
       <InstallAppButton />
     </aside>
 
-    <section className={`eye-workspace${mapExpanded ? " map-focus" : ""}`}>
-      <div className={`eye-grid${mapExpanded ? " map-expanded" : ""}`}>
+    <section className={`eye-workspace${mapExpanded ? " map-focus" : ""}${newsExpanded ? " news-focus" : ""}`}>
+      <div className={`eye-grid${mapExpanded ? " map-expanded" : ""}${newsExpanded ? " news-expanded" : ""}`}>
         <section className="map-panel" aria-label="Mapa mundial de noticias">
           <div className="map-overlay-top">
             <div className="map-title">
@@ -396,7 +403,7 @@ export function GlobalEye() {
                   <button aria-pressed={showConnections} onClick={() => setShowConnections((value) => !value)}>Conexiones</button>
                 </div>}
               </div>
-              <button className="expand-button" onClick={() => setMapExpanded((value) => !value)} aria-label={mapExpanded ? "Salir de la vista amplia" : "Ampliar el mapa"} title={mapExpanded ? "Salir (Esc)" : "Ampliar mapa"}>
+              <button className="expand-button" onClick={() => { setNewsExpanded(false); setMapExpanded((value) => !value); }} aria-label={mapExpanded ? "Salir de la vista amplia" : "Ampliar el mapa"} title={mapExpanded ? "Salir (Esc)" : "Ampliar mapa"}>
                 {mapExpanded
                   ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
                   : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></svg>}
@@ -437,6 +444,12 @@ export function GlobalEye() {
         </section>
 
         <aside className="news-panel" aria-label="Noticias de la consulta">
+          <div className="context-strip" aria-label="Contexto de la consulta">
+            <span><b>{mode === "early" ? "Señales" : categoryLabel(category)}</b></span>
+            <span>{selectedPlace?.name || countryName || "Mundo"}</span>
+            <span>{windowLabel}</span>
+            {hasActiveFilters && <button onClick={clearLocation}>Restablecer</button>}
+          </div>
           <div className="news-heading">
             <h2>{mode === "early" ? "Señales verificables" : "Titulares en vivo"}</h2>
             <div className="news-tools">
@@ -446,6 +459,11 @@ export function GlobalEye() {
                 <option value="coverage">Mayor alcance</option>
                 <option value="signal">Señal destacada</option>
               </select>
+              <button className="news-expand-button" onClick={() => { setMapExpanded(false); setNewsExpanded((value) => !value); }} aria-label={newsExpanded ? "Salir de la vista amplia de noticias" : "Ampliar noticias"} title={newsExpanded ? "Salir (Esc)" : "Ampliar noticias"}>
+                {newsExpanded
+                  ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3" /><path d="M21 8h-3a2 2 0 0 1-2-2V3" /><path d="M3 16h3a2 2 0 0 1 2 2v3" /><path d="M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
+                  : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" /></svg>}
+              </button>
             </div>
           </div>
           <div className="feed-tabs" role="tablist" aria-label="Vista de titulares" onKeyDown={handleFeedTabs}>
