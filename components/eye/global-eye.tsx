@@ -64,10 +64,13 @@ export function GlobalEye() {
   const [methodOpen, setMethodOpen] = useState(false);
   const [rankingsOpen, setRankingsOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [compactLayout, setCompactLayout] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(() => typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted" && localStorage.getItem("pulso-notifications") === "on");
   const [visiblePage, setVisiblePage] = useState({ key: "", count: 30 });
   const searchRef = useRef<HTMLInputElement>(null);
+  const mobileFilterRef = useRef<HTMLButtonElement>(null);
+  const mobileCloseRef = useRef<HTMLButtonElement>(null);
   const placeRequestRef = useRef(0);
   const placeAbortRef = useRef<AbortController | null>(null);
 
@@ -89,12 +92,22 @@ export function GlobalEye() {
     return () => window.removeEventListener("keydown", shortcut);
   }, []);
   useEffect(() => {
+    const media = window.matchMedia("(max-width: 1100px)");
+    const update = () => setCompactLayout(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  useEffect(() => {
+    if (compactLayout && mobileFiltersOpen) window.requestAnimationFrame(() => mobileCloseRef.current?.focus());
+  }, [compactLayout, mobileFiltersOpen]);
+  useEffect(() => {
     if (!mapExpanded && !newsExpanded && !mobileFiltersOpen) return;
     const closeOverlay = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setMapExpanded(false);
       setNewsExpanded(false);
-      setMobileFiltersOpen(false);
+      if (mobileFiltersOpen) closeMobileFilters();
     };
     window.addEventListener("keydown", closeOverlay);
     return () => window.removeEventListener("keydown", closeOverlay);
@@ -118,6 +131,11 @@ export function GlobalEye() {
   const connectionArticles = useMemo(() => selectedConnection ? articles.filter((item) => selectedConnection.articleIds.includes(item.id)) : [], [selectedConnection, articles]);
   const focusedArticle = useMemo(() => articles.find((item) => item.id === focusedArticleId) ?? savedArchive.find((item) => item.id === focusedArticleId) ?? null, [articles, savedArchive, focusedArticleId]);
   const mapArticles = useMemo(() => focusedArticle && !articles.some((item) => item.id === focusedArticle.id) ? [focusedArticle, ...articles] : articles, [articles, focusedArticle]);
+
+  function closeMobileFilters() {
+    setMobileFiltersOpen(false);
+    window.requestAnimationFrame(() => mobileFilterRef.current?.focus());
+  }
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
@@ -174,8 +192,15 @@ export function GlobalEye() {
     setQuery("");
     setSearchDraft("");
     setCategory("all");
+    setTimespan("24h");
     setMode("news");
     setFeedMode("latest");
+    setSortMode("newest");
+    setSelectedConnection(null);
+    setFocusedArticleId("");
+    setMapExpanded(false);
+    setNewsExpanded(false);
+    setMobileFiltersOpen(false);
     setResetKey((value) => value + 1);
   }
   function selectMode(nextMode: PulseMode) {
@@ -263,6 +288,7 @@ export function GlobalEye() {
   const okSources = data?.sources.filter((source) => source.status === "ok") ?? [];
   const unavailable = !!error && !data?.sources.length;
   const hasActiveFilters = category !== "all" || timespan !== "24h" || mode !== "news" || !!country || !!query || !!selectedPlace;
+  const activeFilterCount = [category !== "all", timespan !== "24h", mode !== "news", !!country, !!query || !!selectedPlace].filter(Boolean).length;
   const windowLabel = WINDOWS.find(([id]) => id === timespan)?.[1] || timespan;
 
   useEffect(() => {
@@ -312,14 +338,19 @@ export function GlobalEye() {
         <button className="header-button" onClick={() => void refresh()} disabled={loading} aria-label="Actualizar fuentes" title="Actualizar ahora">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={loading ? "spin" : ""}><path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" /></svg>
         </button>
-        <button className="mobile-filter-button" onClick={() => setMobileFiltersOpen((value) => !value)} aria-expanded={mobileFiltersOpen} aria-controls="eye-navigation" aria-label="Abrir filtros y temas">
+        <button ref={mobileFilterRef} className="mobile-filter-button" onClick={() => setMobileFiltersOpen((value) => !value)} aria-expanded={mobileFiltersOpen} aria-controls="eye-navigation" aria-label={`Abrir filtros y temas${activeFilterCount ? `, ${activeFilterCount} activos` : ""}`}>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 6h16M7 12h10M10 18h4" /></svg>
+          {activeFilterCount > 0 && <span className="filter-count" aria-hidden="true">{activeFilterCount}</span>}
         </button>
       </div>
     </header>
 
-    {mobileFiltersOpen && <button className="rail-backdrop" aria-label="Cerrar filtros" onClick={() => setMobileFiltersOpen(false)} />}
-    <aside id="eye-navigation" className={`eye-rail${mobileFiltersOpen ? " mobile-open" : ""}`} aria-label="Filtros y navegación">
+    {mobileFiltersOpen && <button className="rail-backdrop" aria-label="Cerrar filtros" onClick={closeMobileFilters} />}
+    <aside id="eye-navigation" className={`eye-rail${mobileFiltersOpen ? " mobile-open" : ""}`} aria-label="Filtros y navegación" aria-hidden={compactLayout && !mobileFiltersOpen ? true : undefined} inert={compactLayout && !mobileFiltersOpen}>
+      <div className="rail-mobile-head">
+        <div><strong>Explorar el mundo</strong><small>{activeFilterCount ? `${activeFilterCount} filtros activos` : "Sin filtros adicionales"}</small></div>
+        <button ref={mobileCloseRef} onClick={closeMobileFilters} aria-label="Cerrar filtros">✕</button>
+      </div>
       <div className="rail-block">
         <span className="rail-label">Vista</span>
         <div className="mode-switch">
@@ -453,7 +484,7 @@ export function GlobalEye() {
           <div className="news-heading">
             <h2>{mode === "early" ? "Señales verificables" : "Titulares en vivo"}</h2>
             <div className="news-tools">
-              <span className={`result-count${loading && !data ? " loading" : ""}`}>{loading && !data ? "…" : unavailable ? "—" : visibleArticles.length}</span>
+              <span className={`result-count${loading && !data ? " loading" : ""}`} aria-live="polite" aria-atomic="true">{loading && !data ? "…" : unavailable ? "—" : visibleArticles.length}</span>
               <select value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)} aria-label="Ordenar noticias">
                 <option value="newest">Más recientes</option>
                 <option value="coverage">Mayor alcance</option>
@@ -472,7 +503,7 @@ export function GlobalEye() {
             <button id="feed-tab-located" data-feed-mode="located" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "located"} tabIndex={feedMode === "located" ? 0 : -1} className={feedMode === "located" ? "active" : ""} onClick={() => setFeedMode("located")}>En el mapa</button>
             <button id="feed-tab-saved" data-feed-mode="saved" role="tab" aria-controls="pulse-feed" aria-selected={feedMode === "saved"} tabIndex={feedMode === "saved" ? 0 : -1} className={feedMode === "saved" ? "active" : ""} onClick={() => setFeedMode("saved")}>Guardadas</button>
           </div>
-          <div id="pulse-feed" className="feed" role="tabpanel" aria-labelledby={`feed-tab-${feedMode}`} aria-live="polite" aria-busy={loading}>
+          <div id="pulse-feed" className="feed" role="tabpanel" aria-labelledby={`feed-tab-${feedMode}`} aria-busy={loading}>
             {loading && !data && [1, 2, 3, 4].map((item) => <div className="story-skeleton" key={item} />)}
             {!loading && visibleArticles.length === 0 && <div className="empty-state">
               <strong>{feedMode === "saved" ? "Todavía no guardas noticias" : unavailable ? "Fuentes momentáneamente no disponibles" : "Sin resultados para esta combinación"}</strong>
