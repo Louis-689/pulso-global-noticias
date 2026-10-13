@@ -1,10 +1,10 @@
 {
   "name": "pulso-global",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=20.9"
   },
   "scripts": {
     "dev": "next dev",
@@ -12,7 +12,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "iniciar": "node scripts/iniciar.mjs"
   },
   "dependencies": {
     "@fontsource/bricolage-grotesque": "^5.3.0",
@@ -34,5 +35,7 @@
     "@types/topojson-client": "^3.1.5",
     "tsx": "^4.23.15",
     "typescript": "5.9.3"
-  }
+  },
+  "license": "MIT",
+  "description": "Pulso Global: centro de noticias abierto y multilingüe, con fuentes confiables y rutas para países con censura."
 }

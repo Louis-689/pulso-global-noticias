@@ -471,7 +471,7 @@ export function PulsoApp() {
         {([["🔓", "mission.1t"], ["🌐", "mission.2t"], ["🔍", "mission.3t"]] as const).map(([icon, key]) => <li key={key}>{icon} {t(key)}</li>)}
       </ul>
       <p>{t("footer.mission")}</p>
-      <small>{t("footer.made")} · <a href="https://github.com/Louis-689" target="_blank" rel="noopener noreferrer">@Louis-689</a></small>
+      <small>{t("footer.made")} · <a href="https://github.com/Louis-689" target="_blank" rel="noopener noreferrer">@Louis-689</a> · <a href="https://github.com/Louis-689/pulso-global-noticias" target="_blank" rel="noopener noreferrer">⭐ GitHub</a></small>
     </footer>
 
     {sourcesOpen && <div className="modal-root" onClick={() => setSourcesOpen(false)}>
