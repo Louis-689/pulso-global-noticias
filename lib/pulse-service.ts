@@ -1,5 +1,10 @@
 import { countrySearchName, derivePulse, filterTimeAndDedupe, normalizeArticle, parseRssItems } from "./pulse-data";
 import { PULSE_TIMESPANS } from "./pulse-types";
+import { LIBRARY } from "./library";
+import { enrichMedia } from "./enrich";
+import { isTrustedHost } from "./trusted";
+import { corroborate } from "./verify";
+import { rememberMediaHosts } from "./media-hosts";
 import type { ArticleContext } from "./pulse-data";
 import type { PulseArticle, PulseCategory, PulseMode, PulseResponse, PulseSource, PulseTimespan } from "./pulse-types";
 
@@ -15,8 +20,11 @@ const CATEGORY_QUERIES: Record<PulseCategory, string> = {
   culture: "(cultura OR culture OR arte OR art OR sociedad OR society)",
   sports: "(deportes OR esportes OR sports OR sport OR fútbol OR football OR athletics)",
   education: "(educación OR educação OR education OR écoles OR schools OR universidad OR university)",
+  factcheck: '(verificación OR "fact check" OR desinformación OR disinformation OR désinformation OR bulo OR "fake news" OR falso)',
 };
-export type PulseRequest = { category: PulseCategory; timespan: PulseTimespan; mode: PulseMode; country: string; query: string };
+export const NEWS_LANGUAGES = ["es", "en", "pt", "fr", "de", "it", "ru", "ar", "zh", "ja", "hi"] as const;
+export type NewsLanguage = (typeof NEWS_LANGUAGES)[number];
+export type PulseRequest = { category: PulseCategory; timespan: PulseTimespan; mode: PulseMode; country: string; query: string; lang?: NewsLanguage };
 export function parsePulseRequest(params: URLSearchParams): PulseRequest {
   const category = params.get("category") ?? "all";
   const timespan = params.get("timespan") ?? "24h";
@@ -24,7 +32,8 @@ export function parsePulseRequest(params: URLSearchParams): PulseRequest {
   return {
     category: Object.hasOwn(CATEGORY_QUERIES, category) ? category as PulseCategory : "all",
     timespan: PULSE_TIMESPANS.includes(timespan as PulseTimespan) ? timespan as PulseTimespan : "24h",
-    mode: params.get("mode") === "early" ? "early" : "news", country: countrySearchName(country) ? country : "",
+    mode: params.get("mode") === "early" ? "early" : params.get("mode") === "library" ? "library" : "news",
+    lang: (NEWS_LANGUAGES as readonly string[]).includes(params.get("lang") ?? "") ? params.get("lang") as NewsLanguage : "es", country: countrySearchName(country) ? country : "",
     query: (params.get("q") ?? "").replace(/[\u0000-\u001f\u007f"<>\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100),
   };
 }
@@ -63,7 +72,7 @@ export async function boundedFetchText(url: string, expected: "json" | "xml", fe
   } finally { clearTimeout(timer); }
 }
 
-type ProviderResult = { articles: PulseArticle[]; sources: PulseSource[]; errors: string[]; fetchedAt: string };
+type ProviderResult = { articles: PulseArticle[]; sources: PulseSource[]; errors: string[]; fetchedAt: string; untrustedDropped?: number };
 const cache = new Map<string, { value: ProviderResult; expires: number }>();
 const inFlight = new Map<string, Promise<ProviderResult>>();
 let starts: number[] = [];
@@ -136,7 +145,7 @@ function errorMessage(error: unknown): string {
 function normalizeMany(raw: unknown[], context: ArticleContext): PulseArticle[] {
   return raw.slice(0, 500).map((item) => normalizeArticle(item, context)).filter((item): item is PulseArticle => item !== null);
 }
-type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string; filterToTopic?: boolean; timeoutMs?: number };
+type NewsRssFeed = { name: string; url: string; homeUrl: string; note: string; filterToTopic?: boolean; timeoutMs?: number; lang?: string };
 const CATEGORY_TERMS: Record<Exclude<PulseCategory, "all">, string[]> = {
   politics: ["politic", "gobiern", "government", "president", "ministro", "elecci", "diploma", "parlament", "congreso", "kremlin"],
   economy: ["econom", "mercad", "market", "inflaci", "inflation", "comerci", "trade", "banco", "bank", "empresa", "business"],
@@ -148,19 +157,17 @@ const CATEGORY_TERMS: Record<Exclude<PulseCategory, "all">, string[]> = {
   culture: ["cultura", "culture", "arte", "art", "cine", "film", "music", "musica", "festival", "libro"],
   sports: ["deporte", "sport", "futbol", "football", "tenis", "tennis", "liga", "tournament", "campeon"],
   education: ["educa", "school", "escuela", "universidad", "university", "estudiante", "student", "docente", "teacher"],
+  factcheck: ["verifica", "fact check", "fact-check", "factcheck", "bulo", "falso", "false", "fake", "desinforma", "disinforma", "misinforma", "enganos", "misleading", "hoax", "desmient", "chequeo", "debunk"],
 };
 function topicMatches(title: string, category: PulseCategory): boolean {
   if (category === "all") return true;
   const folded = title.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
-  return CATEGORY_TERMS[category].some((term) => folded.includes(term));
+  // Terms must start a word: "art" should not match inside "earthquake".
+  return CATEGORY_TERMS[category].some((term) => new RegExp(`(^|[^\\p{L}\\p{N}])${term}`, "u").test(folded));
 }
-const RT_FEED: NewsRssFeed = {
-  name: "RT en Español · fuente estatal rusa",
-  url: "https://actualidad.rt.com/feeds/all.rss",
-  homeUrl: "https://actualidad.rt.com/",
-  note: "RSS público de RT en Español, medio financiado por el Estado ruso. Se muestra como perspectiva de esa fuente, no como confirmación independiente; contrasta sus afirmaciones con otras coberturas.",
-  filterToTopic: true,
-};
+export function detectTopic(title: string): PulseCategory | undefined {
+  return (Object.keys(CATEGORY_TERMS) as Array<Exclude<PulseCategory, "all">>).find((category) => topicMatches(title, category));
+}
 const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
   all: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
   politics: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
@@ -173,6 +180,7 @@ const BBC_FEEDS: Record<PulseCategory, { name: string; url: string }> = {
   culture: { name: "BBC News · Cultura", url: "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml" },
   sports: { name: "BBC Sport", url: "https://feeds.bbci.co.uk/sport/rss.xml" },
   education: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+  factcheck: { name: "BBC News · Mundo", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
 };
 const CATEGORY_DIRECT_FEEDS: Partial<Record<PulseCategory, NewsRssFeed>> = {
   economy: { name: "NPR · Business", url: "https://feeds.npr.org/1006/rss.xml", homeUrl: "https://www.npr.org/sections/business/", note: "Canal RSS temático directo de NPR Business.", timeoutMs: 5_000 },
@@ -183,6 +191,56 @@ const CATEGORY_DIRECT_FEEDS: Partial<Record<PulseCategory, NewsRssFeed>> = {
   culture: { name: "NPR · Arts & Life", url: "https://feeds.npr.org/1008/rss.xml", homeUrl: "https://www.npr.org/sections/arts/", note: "Canal RSS temático directo de NPR Arts & Life.", timeoutMs: 5_000 },
   education: { name: "EdSurge", url: "https://www.edsurge.com/articles_rss", homeUrl: "https://www.edsurge.com/", note: "Canal RSS temático directo de EdSurge.", timeoutMs: 5_000 },
 };
+// Fact-checkers (IFCN signatories) debunk distorted stories: the antidote to propaganda.
+const FACT = (name: string, url: string, homeUrl: string, lang: string): NewsRssFeed => ({ name, url, homeUrl, lang, note: "Verificador de datos firmante de la red internacional IFCN: desmiente bulos y propaganda.", timeoutMs: 5_000 });
+const FACTCHECK_FEEDS: Partial<Record<NewsLanguage, NewsRssFeed[]>> = {
+  es: [FACT("Maldita.es", "https://maldita.es/feed/", "https://maldita.es/", "es"), FACT("Chequeado", "https://chequeado.com/feed/", "https://chequeado.com/", "es")],
+  en: [FACT("Full Fact", "https://fullfact.org/feed/", "https://fullfact.org/", "en"), FACT("PolitiFact", "https://www.politifact.com/rss/all/", "https://www.politifact.com/", "en"), FACT("Snopes", "https://www.snopes.com/feed/", "https://www.snopes.com/", "en")],
+  pt: [FACT("Aos Fatos", "https://www.aosfatos.org/noticias/feed/", "https://www.aosfatos.org/", "pt")],
+};
+// UN News publishes the same newsroom in the six official languages and Portuguese.
+const UN = (lang: string, name: string): NewsRssFeed => ({ name, url: `https://news.un.org/feed/subscribe/${lang}/news/all/rss.xml`, homeUrl: `https://news.un.org/${lang}/`, lang, note: "Noticias ONU en el idioma del lector; es una fuente institucional.", timeoutMs: 5_000 });
+// Direct publisher feeds in the reader's language. They usually carry photos.
+const BBC = (service: string, name: string): NewsRssFeed => ({ name, url: `https://feeds.bbci.co.uk/${service}/rss.xml`, homeUrl: `https://www.bbc.com/${service.split("/")[0]}`, note: "Servicio de la BBC en el idioma del lector.", timeoutMs: 5_000 });
+const LANGUAGE_FEED_LIST: Record<NewsLanguage, NewsRssFeed[]> = {
+  es: [BBC("mundo", "BBC Mundo"), UN("es", "Noticias ONU"),
+    { name: "El País América", url: "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/america/portada", homeUrl: "https://elpais.com/america/", note: "Portada de El País América.", timeoutMs: 5_000 },
+    { name: "France 24 Español", url: "https://www.france24.com/es/rss", homeUrl: "https://www.france24.com/es/", note: "Canal RSS de France 24 en español.", timeoutMs: 5_000 },
+    { name: "DW Español", url: "https://rss.dw.com/xml/rss-sp-all", homeUrl: "https://www.dw.com/es/", note: "Canal RSS de DW en español.", timeoutMs: 5_000 }],
+  en: [],
+  pt: [BBC("portuguese", "BBC News Brasil"), UN("pt", "ONU News")],
+  fr: [UN("fr", "ONU Info"), { name: "France 24 Français", url: "https://www.france24.com/fr/rss", homeUrl: "https://www.france24.com/fr/", note: "Canal RSS de France 24 en francés.", timeoutMs: 5_000 }, BBC("afrique", "BBC Afrique")],
+  de: [{ name: "DW Deutsch", url: "https://rss.dw.com/xml/rss-de-all", homeUrl: "https://www.dw.com/de/", note: "Canal RSS de DW en alemán.", timeoutMs: 5_000 }],
+  it: [{ name: "ANSA", url: "https://www.ansa.it/sito/ansait_rss.xml", homeUrl: "https://www.ansa.it/", note: "Agencia italiana ANSA.", timeoutMs: 5_000 }],
+  ru: [BBC("russian", "BBC Русская служба"), UN("ru", "Новости ООН")],
+  ar: [BBC("arabic", "BBC عربي"), UN("ar", "أخبار الأمم المتحدة"), { name: "France 24 عربي", url: "https://www.france24.com/ar/rss", homeUrl: "https://www.france24.com/ar/", note: "Canal RSS de France 24 en árabe.", timeoutMs: 5_000 }],
+  zh: [BBC("zhongwen/simp", "BBC 中文"), UN("zh", "联合国新闻")],
+  ja: [BBC("japanese", "BBC ニュース")],
+  hi: [BBC("hindi", "BBC हिन्दी")],
+};
+const LANGUAGE_FEEDS = Object.fromEntries(Object.entries(LANGUAGE_FEED_LIST)
+  .map(([lang, feeds]) => [lang, feeds.map((feed) => ({ ...feed, lang: feed.lang ?? lang }))])) as Record<NewsLanguage, NewsRssFeed[]>;
+
+type Edition = { code: string; name: string; hl: string; gl: string; ceid: string; lang: NewsLanguage };
+const ed = (code: string, name: string, hl: string, gl: string, ceid: string, lang: NewsLanguage): Edition => ({ code, name: `Google News · ${name}`, hl, gl, ceid, lang });
+// Several regional editions per language, so the chosen language fills the feed.
+const EDITIONS: Record<NewsLanguage, Edition[]> = {
+  es: [ed("MX", "México", "es-419", "MX", "MX:es-419", "es"), ed("ES", "España", "es", "ES", "ES:es", "es"), ed("AR", "Argentina", "es-419", "AR", "AR:es-419", "es"),
+    ed("CO", "Colombia", "es-419", "CO", "CO:es-419", "es"), ed("PE", "Perú", "es-419", "PE", "PE:es-419", "es"), ed("US-ES", "EE. UU. en español", "es-419", "US", "US:es-419", "es")],
+  en: [ed("US", "Global inglés", "en-US", "US", "US:en", "en"), ed("GB", "Reino Unido", "en-GB", "GB", "GB:en", "en"), ed("IN", "India", "en-IN", "IN", "IN:en", "en"), ed("ZA", "África austral", "en-ZA", "ZA", "ZA:en", "en")],
+  pt: [ed("BR", "Brasil", "pt-BR", "BR", "BR:pt-419", "pt"), ed("PT", "Portugal", "pt-PT", "PT", "PT:pt-150", "pt")],
+  fr: [ed("FR", "Francia", "fr", "FR", "FR:fr", "fr"), ed("CA-FR", "Canadá francés", "fr-CA", "CA", "CA:fr", "fr")],
+  de: [ed("DE", "Alemania", "de", "DE", "DE:de", "de"), ed("AT", "Austria", "de", "AT", "AT:de", "de"), ed("CH-DE", "Suiza", "de", "CH", "CH:de", "de")],
+  it: [ed("IT", "Italia", "it", "IT", "IT:it", "it")],
+  ru: [ed("RU", "Русский", "ru", "RU", "RU:ru", "ru")],
+  ar: [ed("EG", "Mundo árabe", "ar", "EG", "EG:ar", "ar"), ed("AE", "Golfo", "ar", "AE", "AE:ar", "ar"), ed("LB", "Levante", "ar", "LB", "LB:ar", "ar")],
+  zh: [ed("TW", "中文", "zh-TW", "TW", "TW:zh-Hant", "zh"), ed("HK", "香港", "zh-HK", "HK", "HK:zh-Hant", "zh")],
+  ja: [ed("JP", "Japón", "ja", "JP", "JP:ja", "ja")],
+  hi: [ed("IN-HI", "हिन्दी", "hi", "IN", "IN:hi", "hi")],
+};
+// A few editions in other languages keep the world view broad (and shown on request).
+const WORLD_EDITIONS = [EDITIONS.en[0], EDITIONS.fr[0], EDITIONS.ar[0], EDITIONS.en[2], EDITIONS.pt[0]];
+
 export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: NewsRssFeed[] } {
   const country = countrySearchName(request.country);
   const placeTerms = [country ? `("${country.english}" OR "${country.spanish}")` : "", request.query ? `"${request.query}"` : ""].filter(Boolean).join(" ");
@@ -194,28 +252,16 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
   // The API layer re-filters every item by time. With no topic and no place, use the live
   // front-page editions instead of a search: broader and always current.
   const rssQuery = `${topic.replace(/[()]/g, "")} ${placeTerms}`.trim();
-  const editions = [
-    { code: "PE", name: "Google News · Perú", hl: "es-419", gl: "PE", ceid: "PE:es-419" },
-    { code: "MX", name: "Google News · México", hl: "es-419", gl: "MX", ceid: "MX:es-419" },
-    { code: "ES", name: "Google News · España", hl: "es", gl: "ES", ceid: "ES:es" },
-    { code: "US", name: "Google News · Global inglés", hl: "en-US", gl: "US", ceid: "US:en" },
-    { code: "BR", name: "Google News · Brasil", hl: "pt-BR", gl: "BR", ceid: "BR:pt-419" },
-    { code: "FR", name: "Google News · Francia", hl: "fr", gl: "FR", ceid: "FR:fr" },
-    { code: "IN", name: "Google News · India", hl: "en-IN", gl: "IN", ceid: "IN:en" },
-    { code: "DE", name: "Google News · Alemania", hl: "de", gl: "DE", ceid: "DE:de" },
-    { code: "JP", name: "Google News · Japón", hl: "ja", gl: "JP", ceid: "JP:ja" },
-    { code: "ZA", name: "Google News · África austral", hl: "en-ZA", gl: "ZA", ceid: "ZA:en" },
-    { code: "EG", name: "Google News · Mundo árabe", hl: "ar", gl: "EG", ceid: "EG:ar" },
-  ];
-  if (country && !editions.some((edition) => edition.code === request.country)) {
-    editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en` });
+  const lang = request.lang ?? "es";
+  const own = EDITIONS[lang];
+  const world = WORLD_EDITIONS.filter((edition) => edition.lang !== lang);
+  // Searches use fewer editions: direct publisher feeds below add redundancy
+  // without hammering Google from the same address.
+  const editions: Edition[] = rssQuery ? [...own.slice(0, 3), ...world.slice(0, 1)] : [...own, ...world.slice(0, 4)];
+  if (country && !editions.some((edition) => edition.gl === request.country)) {
+    editions.unshift({ code: request.country, name: `Google News · ${country.spanish}`, hl: "en", gl: request.country, ceid: `${request.country}:en`, lang: "en" });
   }
-  // Search requests use a geographically diverse subset: direct publisher
-  // feeds below provide the remaining redundancy without hammering eleven
-  // Google endpoints from the same shared edge address.
-  const selectedEditions = rssQuery
-    ? editions.filter((edition) => ["PE", "US", "BR", "FR", "IN", "EG", request.country].includes(edition.code))
-    : editions;
+  const selectedEditions = editions;
   const googleFeeds: NewsRssFeed[] = selectedEditions.map((edition) => ({
     name: edition.name,
     url: rssQuery
@@ -226,24 +272,28 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
       ? "Búsqueda por tema y lugar en la edición regional. Los enlaces pasan por Google News; la hora la comunica el propio feed."
       : "Portada viva de la edición regional: titulares principales actualizados continuamente.",
     timeoutMs: 3_000,
+    lang: edition.lang,
   }));
   const guardianSection: Record<PulseCategory, string> = {
     all: "world", politics: "politics", economy: "business", technology: "technology", science: "science",
     health: "society/health", climate: "environment/climate-crisis", security: "world", culture: "culture",
-    sports: "sport", education: "education",
+    sports: "sport", education: "education", factcheck: "media",
   };
   const categoryDirect = CATEGORY_DIRECT_FEEDS[request.category];
-  const directFeeds: NewsRssFeed[] = [
-    ...(categoryDirect ? [categoryDirect] : []),
-    { name: "Al Jazeera English", url: "https://www.aljazeera.com/xml/rss/all.xml", homeUrl: "https://www.aljazeera.com/", note: "Canal RSS público directo de Al Jazeera English.", timeoutMs: 5_000 },
-    { name: "NPR · World", url: "https://feeds.npr.org/1004/rss.xml", homeUrl: "https://www.npr.org/sections/world/", note: "Canal RSS público directo de NPR World.", timeoutMs: 5_000 },
-    { name: `The Guardian · ${request.category}`, url: `https://www.theguardian.com/${guardianSection[request.category]}/rss`, homeUrl: `https://www.theguardian.com/${guardianSection[request.category]}`, note: "Canal RSS temático directo de The Guardian.", timeoutMs: 5_000, filterToTopic: false },
-    { name: "UN News", url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml", homeUrl: "https://news.un.org/", note: "Canal RSS público de Noticias ONU; es una fuente institucional.", timeoutMs: 5_000 },
-    { name: "France 24 English", url: "https://www.france24.com/en/rss", homeUrl: "https://www.france24.com/en/", note: "Canal RSS público directo de France 24 English.", timeoutMs: 5_000 },
+  const factcheck = request.category === "factcheck";
+  const directFeeds: NewsRssFeed[] = factcheck ? [...(FACTCHECK_FEEDS[lang] ?? []), ...(lang === "en" ? [] : FACTCHECK_FEEDS.en ?? [])].map((feed) => ({ ...feed, filterToTopic: false })) : [
+    ...(categoryDirect ? [{ ...categoryDirect, lang: "en" }] : []),
+    ...LANGUAGE_FEEDS[lang],
+    { name: "Al Jazeera English", url: "https://www.aljazeera.com/xml/rss/all.xml", homeUrl: "https://www.aljazeera.com/", note: "Canal RSS público directo de Al Jazeera English.", lang: "en", timeoutMs: 5_000 },
+    { name: "NPR · World", url: "https://feeds.npr.org/1004/rss.xml", homeUrl: "https://www.npr.org/sections/world/", note: "Canal RSS público directo de NPR World.", lang: "en", timeoutMs: 5_000 },
+    { name: `The Guardian · ${request.category}`, url: `https://www.theguardian.com/${guardianSection[request.category]}/rss`, homeUrl: `https://www.theguardian.com/${guardianSection[request.category]}`, note: "Canal RSS temático directo de The Guardian.", lang: "en", timeoutMs: 5_000, filterToTopic: false },
+    { name: "UN News", url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml", homeUrl: "https://news.un.org/", note: "Canal RSS público de Noticias ONU; es una fuente institucional.", lang: "en", timeoutMs: 5_000 },
+    { name: "France 24 English", url: "https://www.france24.com/en/rss", homeUrl: "https://www.france24.com/en/", note: "Canal RSS público directo de France 24 English.", lang: "en", timeoutMs: 5_000 },
   ].map((feed) => ({ ...feed, filterToTopic: feed.filterToTopic ?? request.category !== "all" }));
   const rss: NewsRssFeed[] = [...directFeeds, ...googleFeeds];
   const bbc = BBC_FEEDS[request.category];
-  rss.push({
+  if (!factcheck) rss.push({
+    lang: "en",
     name: bbc.name,
     url: bbc.url,
     homeUrl: "https://www.bbc.com/news",
@@ -252,10 +302,6 @@ export function newsUrls(request: PulseRequest): { gdelt: string | null; rss: Ne
     // Filter them locally so Política, Seguridad and Educación remain coherent.
     filterToTopic: request.category !== "all" && ["politics", "security", "education"].includes(request.category),
   });
-  // Include viewpoints that may be restricted in some jurisdictions whenever
-  // their public feed is legally reachable from the deployment. Availability
-  // can still vary by network or region and is reported in the source panel.
-  rss.push(RT_FEED);
   return { gdelt: gdeltQuery ? `https://api.gdeltproject.org/api/v2/doc/doc?${gdeltParams}` : null, rss };
 }
 export async function loadNews(request: PulseRequest, now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
@@ -275,7 +321,7 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   // preserves global coverage without making every edition fail at once.
   const rssTask = settleLimited(urls.rss, 4, (feed) => boundedFetchText(feed.url, "xml", fetcher, feed.timeoutMs ?? 5_000)
       .then((text) => {
-        const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published" });
+        const normalized = normalizeMany(parseRssItems(text), { provider: feed.name, timestampBasis: "published", lang: feed.lang });
         const scoped = feed.filterToTopic ? normalized.filter((article) => topicMatches(article.title, request.category)) : normalized;
         return filterTimeAndDedupe(scoped, request.timespan, now);
       }));
@@ -312,12 +358,37 @@ export async function loadNews(request: PulseRequest, now: number, fetcher: Fetc
   // Keep the view bounded while reserving room for source-provided multimedia.
   // A purely chronological cut can otherwise let high-volume text-only indexes
   // erase every photographic item even when a public feed supplied it.
-  const candidates = filterTimeAndDedupe(gathered, request.timespan, now, 280);
+  // Only outlets with public editorial standards make it through (lib/trusted.ts).
+  const trusted = gathered.filter((article) => isTrustedHost(article.sourceHost ?? article.destinationHost));
+  const untrustedDropped = gathered.length - trusted.length;
+  const candidates = filterTimeAndDedupe(trusted, request.timespan, now, 280);
   const visual = candidates.filter((article) => article.media).slice(0, 24);
   const visualIds = new Set(visual.map((article) => article.id));
-  const articles = [...visual, ...candidates.filter((article) => !visualIds.has(article.id)).slice(0, 216 - visual.length)]
+  const selected = [...visual, ...candidates.filter((article) => !visualIds.has(article.id)).slice(0, 216 - visual.length)]
     .sort((a, b) => b.seenDate.localeCompare(a.seenDate));
-  return { articles, sources, errors, fetchedAt: new Date(now).toISOString() };
+  const articles = await enrichMedia(selected, fetcher);
+  return { articles, sources, errors, fetchedAt: new Date(now).toISOString(), untrustedDropped };
+}
+
+export async function loadLibrary(now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
+  const settled = await settleLimited(LIBRARY, 5, async (outlet) => {
+    const text = await fetchProviderText(outlet.feed, "xml", fetcher, 6_000, 8_000);
+    return filterTimeAndDedupe(normalizeMany(parseRssItems(text), { provider: outlet.name, sourceName: outlet.name, lang: outlet.language }), "7d", now, 40)
+      .map((article) => ({ ...article, language: outlet.language, outlet: { id: outlet.id, blockedIn: outlet.blockedIn, ...(outlet.stateFunded ? { stateFunded: true } : {}) } }));
+  });
+  const articles: PulseArticle[] = [];
+  const errors: string[] = [];
+  const sources = settled.map((result, index): PulseSource => {
+    const outlet = LIBRARY[index];
+    if (result.status === "fulfilled") {
+      articles.push(...result.value);
+      return { name: outlet.name, url: outlet.home, status: result.value.length ? "ok" : "empty", count: result.value.length };
+    }
+    const note = errorMessage(result.reason); errors.push(`${outlet.name}: ${note}`);
+    return { name: outlet.name, url: outlet.home, status: "error", count: 0, note };
+  });
+  const enriched = await enrichMedia(articles.sort((a, b) => b.seenDate.localeCompare(a.seenDate)), fetcher, 48);
+  return { articles: enriched, sources, errors, fetchedAt: new Date(now).toISOString() };
 }
 
 export function parseEarthquakes(payload: unknown): PulseArticle[] {
@@ -328,8 +399,8 @@ export function parseEarthquakes(payload: unknown): PulseArticle[] {
     const properties = item.properties;
     const coordinates = item.geometry?.coordinates;
     if (!properties || !coordinates || typeof properties.mag !== "number" || !Number.isFinite(properties.mag) || properties.mag < 2.5 || properties.mag > 10 || properties.type !== "earthquake") return [];
-    const raw = { title: `Terremoto M ${properties.mag.toFixed(1)} · ${typeof properties.place === "string" ? properties.place : "Ubicación indicada por USGS"}`, url: properties.url, timestamp: properties.time, language: "English", location: { lat: coordinates[1], lng: coordinates[0], label: properties.place } };
-    const article = normalizeArticle(raw, { provider: "USGS", sourceName: "USGS · registro sísmico", kind: "earthquake", timestampBasis: "event", reviewStatus: properties.status === "reviewed" ? "reviewed" : "preliminary" });
+    const raw = { title: `Terremoto M ${properties.mag.toFixed(1)} · ${typeof properties.place === "string" ? properties.place : "Ubicación indicada por USGS"}`, url: properties.url, timestamp: properties.time, location: { lat: coordinates[1], lng: coordinates[0], label: properties.place } };
+    const article = normalizeArticle(raw, { provider: "USGS", sourceName: "USGS · registro sísmico", kind: "earthquake", lang: "es", timestampBasis: "event", reviewStatus: properties.status === "reviewed" ? "reviewed" : "preliminary" });
     return article && article.destinationHost === "earthquake.usgs.gov" ? [article] : [];
   });
 }
@@ -342,7 +413,7 @@ const EARLY_FEEDS = [
 export async function loadEarly(now: number, fetcher: FetchLike = fetch): Promise<ProviderResult> {
   const settled = await Promise.allSettled(EARLY_FEEDS.map(async (feed) => {
     const text = await fetchProviderText(feed.url, feed.format, fetcher, 7_000, 10_000);
-    const articles = feed.kind === "earthquake" ? parseEarthquakes(JSON.parse(text)) : normalizeMany(parseRssItems(text), { provider: feed.name, sourceName: feed.name, kind: feed.kind, timestampBasis: "published", reviewStatus: feed.reviewStatus })
+    const articles = feed.kind === "earthquake" ? parseEarthquakes(JSON.parse(text)) : normalizeMany(parseRssItems(text), { provider: feed.name, sourceName: feed.name, kind: feed.kind, timestampBasis: "published", reviewStatus: feed.reviewStatus, lang: "en" })
       .filter((article) => feed.hosts.some((host) => article.destinationHost === host || article.destinationHost.endsWith(`.${host}`)));
     return filterTimeAndDedupe(articles, "7d", now);
   }));
@@ -362,23 +433,29 @@ export async function loadEarly(now: number, fetcher: FetchLike = fetch): Promis
 export async function getPulse(request: PulseRequest): Promise<PulseResponse> {
   const now = Date.now();
   // Share the combined early feeds across every filter; no per-query arXiv calls.
-  const key = request.mode === "early" ? "early" : JSON.stringify(request);
-  const result = await cached(key, () => request.mode === "early" ? loadEarly(now) : loadNews(request, now), now);
-  let articles = filterTimeAndDedupe(result.articles, request.timespan, now, 216);
+  const key = request.mode === "news" ? JSON.stringify(request) : request.mode;
+  const result = await cached(key, () => request.mode === "early" ? loadEarly(now) : request.mode === "library" ? loadLibrary(now) : loadNews(request, now), now);
+  let articles = filterTimeAndDedupe(result.articles, request.timespan, now, request.mode === "library" ? 400 : 216);
+  if (request.mode === "library" && request.category !== "all") articles = articles.filter((article) => topicMatches(article.title, request.category));
   if (request.mode === "early" && request.category !== "all") {
     articles = articles.filter((article) => request.category === "science"
       ? article.kind === "earthquake" || article.kind === "preprint" || article.provider === "NASA"
       : request.category === "technology" && article.provider === "arXiv");
   }
+  articles = articles.map((article) => article.topic ? article : { ...article, topic: detectTopic(article.title) });
+  if (request.mode !== "early") articles = corroborate(articles);
+  rememberMediaHosts(articles.flatMap((article) => article.media ? [article.media.url] : []));
   // Town-only titles can lack the country name. Search context never becomes map evidence.
   const view = derivePulse(articles, { country: request.query ? undefined : request.country, query: request.query || undefined });
   const sources = result.sources.map((source) => ({ ...source, count: view.articles.filter((article) => article.provider === source.name).length }));
   return {
     ...view, mode: request.mode, timespan: request.timespan, category: request.category, pointBasis: "mentionedCountries",
     dataProvider: sources.filter((source) => source.status === "ok").map((source) => source.name).join(" · ") || "Sin resultados disponibles",
-    fetchedAt: result.fetchedAt, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
-    coverageNote: request.mode === "early"
+    fetchedAt: result.fetchedAt, untrustedDropped: result.untrustedDropped ?? 0, partial: result.errors.length > 0 || !view.articles.length, sources, errors: result.errors,
+    coverageNote: request.mode === "library"
+      ? "Biblioteca libre: medios cuyo sitio está reportado como bloqueado en al menos un país. Cada titular ofrece rutas alternativas (Archive.org, archive.today, proxy de traducción)."
+      : request.mode === "early"
       ? "Fuentes públicas directas: sismos M2,5+ (USGS), alertas GDACS, publicaciones NASA e investigación en IA (arXiv). Son señales oficiales que pueden actualizarse; no predicen acontecimientos."
-      : `Muestra combinada de hasta 216 titulares multilingües: índices regionales y canales RSS directos de medios y organismos internacionales. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} No es un archivo completo ni una validación automática: cada titular enlaza su origen.`,
+      : `Muestra combinada de hasta 216 titulares multilingües: índices regionales y canales RSS directos de medios y organismos internacionales. El mapa solo marca lugares explícitamente mencionados en la fuente.${request.query ? " La búsqueda por localidad aporta contexto y puede incluir coincidencias sin país identificado." : ""} Solo se muestran medios de la lista de confianza (agencias, emisoras públicas independientes, diarios con política de correcciones, periodismo en el exilio y verificadores); la propaganda estatal queda fuera. Cada titular enlaza su origen e indica cuántos otros medios confirman la historia.`,
   };
 }

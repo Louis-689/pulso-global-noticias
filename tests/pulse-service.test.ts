@@ -12,11 +12,11 @@ test("parsePulseRequest aplica listas permitidas y sanea búsqueda", () => {
   assert.doesNotMatch(request.query, /[<>]/);
 });
 
-test("newsUrls cubre ediciones regionales y atribuye RT", () => {
+test("newsUrls cubre ediciones regionales y excluye propaganda estatal", () => {
   const urls = newsUrls({ category: "politics", timespan: "24h", mode: "news", country: "PE", query: "" });
-  assert.ok(urls.rss.length >= 13);
+  assert.ok(urls.rss.length >= 12);
   assert.ok(urls.rss.some((feed) => feed.name.includes("BBC")));
-  assert.ok(urls.rss.some((feed) => feed.name.includes("RT en Español")));
+  assert.ok(!urls.rss.some((feed) => /rt\.com|sputnik|cgtn|xinhua/i.test(feed.url)));
   assert.ok(urls.rss.some((feed) => feed.name.includes("Perú")));
 });
 
