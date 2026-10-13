@@ -39,7 +39,8 @@ const lock = join(root, "package-lock.json");
 const installed = join(root, "node_modules", ".package-lock.json");
 if (!existsSync(join(root, "node_modules")) || (existsSync(lock) && (!existsSync(installed) || statSync(installed).mtimeMs < statSync(lock).mtimeMs))) {
   say("Instalando lo necesario (tarda un par de minutos)…");
-  run(existsSync(lock) ? ["ci"] : ["install"]);
+  // `npm ci` would delete node_modules first, which Windows refuses while another copy is running.
+  run(existsSync(join(root, "node_modules")) || !existsSync(lock) ? ["install", "--no-audit", "--no-fund"] : ["ci", "--no-audit", "--no-fund"]);
 }
 
 const buildId = join(root, ".next", "BUILD_ID");
