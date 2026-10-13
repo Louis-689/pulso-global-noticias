@@ -1,5 +1,8 @@
 /** Strings for language, translation and reaching people without Internet (v2.4). `{n}` is replaced by a number. */
 const es = {
+  "nonet.lan": "Biblioteca Wi‑Fi sin Internet",
+  "nonet.lanText": "Esta computadora guarda las noticias y su texto completo. Aunque no haya Internet, los teléfonos conectados a su misma red Wi‑Fi o a su punto de acceso pueden abrir Pulso Global con esta dirección o escaneando el código.",
+  "nonet.lanNone": "Conecta esta computadora a una red Wi‑Fi o activa su punto de acceso para ver la dirección.",
   "cat.factcheck": "Desmentidos",
   "lang.more": "+{n} en otros idiomas",
   "lang.mine": "Solo en mi idioma",
@@ -33,6 +36,9 @@ export type ReachKey = keyof typeof es;
 type Reach = Record<ReachKey, string>;
 
 const en: Reach = {
+  "nonet.lan": "Wi‑Fi library, no Internet needed",
+  "nonet.lanText": "This computer keeps the news and their full text. Even with no Internet, phones on the same Wi‑Fi network or its hotspot can open Pulso Global at this address or by scanning the code.",
+  "nonet.lanNone": "Connect this computer to a Wi‑Fi network or turn on its hotspot to see the address.",
   "cat.factcheck": "Fact checks",
   "lang.more": "+{n} in other languages",
   "lang.mine": "Only my language",
@@ -64,6 +70,9 @@ const en: Reach = {
 };
 
 const pt: Reach = {
+  "nonet.lan": "Biblioteca Wi‑Fi sem Internet",
+  "nonet.lanText": "Este computador guarda as notícias e o texto completo. Mesmo sem Internet, os celulares na mesma rede Wi‑Fi ou no seu ponto de acesso podem abrir o Pulso Global neste endereço ou escaneando o código.",
+  "nonet.lanNone": "Conecte este computador a uma rede Wi‑Fi ou ative o ponto de acesso para ver o endereço.",
   "cat.factcheck": "Checagens",
   "lang.more": "+{n} em outros idiomas",
   "lang.mine": "Só no meu idioma",
@@ -95,6 +104,9 @@ const pt: Reach = {
 };
 
 const fr: Reach = {
+  "nonet.lan": "Bibliothèque Wi‑Fi sans Internet",
+  "nonet.lanText": "Cet ordinateur garde les actualités et leur texte complet. Même sans Internet, les téléphones sur le même Wi‑Fi ou sur son point d'accès peuvent ouvrir Pulso Global à cette adresse ou en scannant le code.",
+  "nonet.lanNone": "Connectez cet ordinateur à un réseau Wi‑Fi ou activez son point d'accès pour voir l'adresse.",
   "cat.factcheck": "Vérifications",
   "lang.more": "+{n} dans d'autres langues",
   "lang.mine": "Seulement ma langue",
@@ -126,6 +138,9 @@ const fr: Reach = {
 };
 
 const de: Reach = {
+  "nonet.lan": "WLAN-Bibliothek ohne Internet",
+  "nonet.lanText": "Dieser Computer speichert die Nachrichten samt vollständigem Text. Auch ohne Internet können Handys im selben WLAN oder in seinem Hotspot Pulso Global über diese Adresse oder den Code öffnen.",
+  "nonet.lanNone": "Verbinde diesen Computer mit einem WLAN oder schalte seinen Hotspot ein, um die Adresse zu sehen.",
   "cat.factcheck": "Faktenchecks",
   "lang.more": "+{n} in anderen Sprachen",
   "lang.mine": "Nur meine Sprache",
@@ -157,6 +172,9 @@ const de: Reach = {
 };
 
 const it: Reach = {
+  "nonet.lan": "Biblioteca Wi‑Fi senza Internet",
+  "nonet.lanText": "Questo computer conserva le notizie e il loro testo completo. Anche senza Internet, i telefoni sulla stessa rete Wi‑Fi o sul suo hotspot possono aprire Pulso Global a questo indirizzo o scansionando il codice.",
+  "nonet.lanNone": "Collega questo computer a una rete Wi‑Fi o attiva il suo hotspot per vedere l'indirizzo.",
   "cat.factcheck": "Fact-checking",
   "lang.more": "+{n} in altre lingue",
   "lang.mine": "Solo la mia lingua",
@@ -188,6 +206,9 @@ const it: Reach = {
 };
 
 const ru: Reach = {
+  "nonet.lan": "Wi‑Fi-библиотека без интернета",
+  "nonet.lanText": "Этот компьютер хранит новости и их полный текст. Даже без интернета телефоны в той же сети Wi‑Fi или в его точке доступа могут открыть Pulso Global по этому адресу или по коду.",
+  "nonet.lanNone": "Подключите компьютер к сети Wi‑Fi или включите точку доступа, чтобы увидеть адрес.",
   "cat.factcheck": "Проверка фактов",
   "lang.more": "+{n} на других языках",
   "lang.mine": "Только мой язык",
@@ -219,6 +240,9 @@ const ru: Reach = {
 };
 
 const ar: Reach = {
+  "nonet.lan": "مكتبة واي فاي دون إنترنت",
+  "nonet.lanText": "يحفظ هذا الحاسوب الأخبار ونصها الكامل. حتى دون إنترنت، يمكن للهواتف المتصلة بشبكة الواي فاي نفسها أو بنقطة الاتصال الخاصة به فتح Pulso Global بهذا العنوان أو بمسح الرمز.",
+  "nonet.lanNone": "صِل هذا الحاسوب بشبكة واي فاي أو شغّل نقطة الاتصال لرؤية العنوان.",
   "cat.factcheck": "تدقيق الحقائق",
   "lang.more": "+{n} بلغات أخرى",
   "lang.mine": "لغتي فقط",
@@ -250,6 +274,9 @@ const ar: Reach = {
 };
 
 const zh: Reach = {
+  "nonet.lan": "无需网络的 Wi‑Fi 图书馆",
+  "nonet.lanText": "这台电脑会保存新闻及全文。即使没有互联网，连接同一 Wi‑Fi 或其热点的手机也能通过此地址或扫描二维码打开 Pulso Global。",
+  "nonet.lanNone": "请将这台电脑连接到 Wi‑Fi 或打开热点，以显示地址。",
   "cat.factcheck": "事实核查",
   "lang.more": "+{n} 条其他语言",
   "lang.mine": "只看我的语言",
@@ -281,6 +308,9 @@ const zh: Reach = {
 };
 
 const ja: Reach = {
+  "nonet.lan": "インターネット不要の Wi‑Fi 図書館",
+  "nonet.lanText": "このパソコンはニュースと全文を保存します。インターネットがなくても、同じ Wi‑Fi やこのパソコンのホットスポットにつないだスマホは、このアドレスかコードで Pulso Global を開けます。",
+  "nonet.lanNone": "アドレスを表示するには、このパソコンを Wi‑Fi につなぐかホットスポットをオンにしてください。",
   "cat.factcheck": "ファクトチェック",
   "lang.more": "他の言語で +{n} 件",
   "lang.mine": "自分の言語のみ",
@@ -312,6 +342,9 @@ const ja: Reach = {
 };
 
 const hi: Reach = {
+  "nonet.lan": "बिना इंटरनेट Wi‑Fi पुस्तकालय",
+  "nonet.lanText": "यह कंप्यूटर ख़बरें और उनका पूरा पाठ सहेजता है। इंटरनेट न होने पर भी, उसी Wi‑Fi या उसके हॉटस्पॉट से जुड़े फ़ोन इस पते से या कोड स्कैन करके Pulso Global खोल सकते हैं।",
+  "nonet.lanNone": "पता देखने के लिए इस कंप्यूटर को Wi‑Fi से जोड़ें या उसका हॉटस्पॉट चालू करें।",
   "cat.factcheck": "तथ्य जाँच",
   "lang.more": "अन्य भाषाओं में +{n}",
   "lang.mine": "सिर्फ़ मेरी भाषा",

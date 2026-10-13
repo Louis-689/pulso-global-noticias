@@ -47,6 +47,7 @@ En 2020, Reporteros Sin Fronteras construyó la *Uncensored Library* dentro de M
 | 🕵️ | **Desmentidos** | Verificadores de datos (Maldita, Chequeado, Full Fact, PolitiFact…) que desmontan bulos y propaganda, para quien vive donde tergiversan las noticias. |
 | 🗣 | **Todo en tu idioma** | Las noticias llegan de ediciones y medios en el idioma elegido. Las de otros idiomas se traducen solas (en el propio navegador cuando es posible) y siempre puedes ver el original. |
 | 💾 | **Sin conexión** | La app guarda las últimas noticias y abre aunque se caiga Internet. «Descargar noticias» crea un único archivo, traducido y con el texto completo de las principales noticias, para compartir. |
+| 📶 | **Biblioteca Wi‑Fi sin Internet** | La computadora con Pulso Global guarda cada actualización y el texto completo de las noticias principales. Si se corta Internet, sigue mostrándolas, y los teléfonos conectados a su Wi‑Fi o a su punto de acceso la abren con la dirección o el código QR que aparece en 🛡️ y en la ventana del programa. |
 | 📦 | **Sin Internet también llega** | El archivo de noticias puede viajar por USB o tarjeta SD (como el «Paquete Semanal» de Cuba), de teléfono a teléfono con Briar, o por satélite con Toosheh. Cada noticia tiene un **código QR** que otro teléfono lee con la cámara, sin red. La guía también explica la radio de onda corta y Wikipedia sin conexión (Kiwix). |
 | 🧅 | **Acceso seguro** | Guía de Tor Browser (también por correo con GetTor), Psiphon y Snowflake, con consejos de seguridad. |
 | 🌍 | **Globo interactivo** | Toca un país para ver sus noticias. Los arcos unen países que aparecen juntos en un titular. |
@@ -199,6 +200,7 @@ Tecnología: Next.js 16, React 19, TypeScript, GSAP 3 para las animaciones y d3-
 - **Your language first:** the feed comes from editions and outlets in the language you pick; stories in other languages are machine-translated (on-device in Chrome when available), always with the original one tap away.
 - **Fact checks:** a section with IFCN fact-checkers that debunk rumors and propaganda.
 - **Lite mode**, **offline reading**, and a single-file **news package** (translated, with full text of the top stories) to pass on by USB, SD card, Briar or satellite datacasting such as Toosheh. Every story also has a **QR code** another phone can scan with no Internet.
+- A **Wi‑Fi library**: the computer running it keeps the latest news and full texts on disk, keeps serving them when the Internet is cut, and phones on its Wi‑Fi or hotspot open it at the address or QR shown in the app.
 - A **safe access** guide (Tor, Psiphon, Snowflake) and ways news travels with no Internet at all (satellite, phone-to-phone mesh, shortwave radio, Kiwix).
 - Interactive globe, live TV and 11 UI languages.
 

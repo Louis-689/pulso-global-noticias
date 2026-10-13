@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { DictKey } from "@/lib/i18n";
+import { QrCode } from "./qr-code";
 
 /** Tools for reaching Pulso Global (and the open web) from countries that block it, and ways news travels with no Internet. */
 export function SafeAccess({ t, onDownload, canDownload, preparing }: { t: (key: DictKey) => string; onDownload: () => void; canDownload: boolean; preparing?: boolean }) {
@@ -15,6 +17,10 @@ export function SafeAccess({ t, onDownload, canDownload, preparing }: { t: (key:
     { icon: "📚", name: t("nonet.wiki"), app: "Kiwix", text: t("nonet.wikiText"), href: "https://www.kiwix.org/" },
     { icon: "📻", name: t("nonet.radio"), text: t("nonet.radioText") },
   ];
+  const [lan, setLan] = useState<string[] | null>(null);
+  useEffect(() => {
+    fetch("/api/local").then((response) => response.json() as Promise<{ urls?: string[] }>).then((body) => setLan(body.urls ?? [])).catch(() => setLan([]));
+  }, []);
   return <section className="safe" aria-label={t("safe.title")}>
     <div className="safe-head">
       <h2>🛡️ {t("safe.title")}</h2>
@@ -36,6 +42,14 @@ export function SafeAccess({ t, onDownload, canDownload, preparing }: { t: (key:
     <div className="safe-head nonet-head">
       <h2>📦 {t("nonet.title")}</h2>
       <p>{t("nonet.intro")}</p>
+    </div>
+    <div className="safe-lan">
+      <div>
+        <strong>📶 {t("nonet.lan")}</strong>
+        <p>{t("nonet.lanText")}</p>
+        {lan?.length ? <p className="safe-lan-url">{lan.join(" · ")}</p> : lan && <p>{t("nonet.lanNone")}</p>}
+      </div>
+      {lan?.[0] && <QrCode text={lan[0]} label={lan[0]} />}
     </div>
     <div className="safe-grid">
       <div className="safe-card safe-offline">

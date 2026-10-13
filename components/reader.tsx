@@ -10,6 +10,7 @@ import type { PulseArticle } from "@/lib/pulse-types";
 import { translateMany } from "@/lib/translate-client";
 import { fitBytes, QrCode } from "./qr-code";
 import { Bookmark, Cover } from "./story-card";
+import { useTranslatedTitles } from "./use-translations";
 import { useDialog } from "./use-dialog";
 
 type Props = {
@@ -42,6 +43,7 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
   const doneRef = useRef<HTMLParagraphElement>(null);
   const [full, setFull] = useState<FullText>({ state: "idle" });
   const [qr, setQr] = useState(false);
+  const relatedTitles = useTranslatedTitles(related, lang);
   const foreign = !!shown?.lang && shown.lang !== lang;
   // Stories in another language open translated; "Ver original" switches back.
   const [translating, setTranslating] = useState(foreign);
@@ -215,7 +217,7 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
         <h3>👀 {t("reader.related")}</h3>
         <div className="related">
           {related.map((item) => <button key={item.id} onClick={() => onOpen(item)}>
-            <strong dir="auto">{item.title}</strong>
+            <strong dir="auto">{relatedTitles.get(item.id) ?? item.title}</strong>
             <small>{sourceLabel(item)} · {relativeTime(item.publishedAt || item.seenDate, lang)}</small>
           </button>)}
         </div>

@@ -21,7 +21,7 @@ import { StoryCard } from "./story-card";
 import { Ticker } from "./ticker";
 import { useDialog } from "./use-dialog";
 import { usePulse } from "./use-pulse";
-import { useTranslatedTitles } from "./use-translations";
+import { useTranslated, useTranslatedTitles } from "./use-translations";
 import { translateMany } from "@/lib/translate-client";
 import { isTrustedHost } from "@/lib/trusted";
 import type { OfflineStory } from "@/lib/offline";
@@ -148,6 +148,9 @@ export function PulsoApp() {
   }, [data, inMyLang]);
   const onScreen = useMemo(() => [...(lead ? [lead] : []), ...rest, ...tickerArticles], [lead, rest, tickerArticles]);
   const titles = useTranslatedTitles(onScreen, lang);
+  // Outlet descriptions exist in Spanish and English; every other language gets a translation.
+  const aboutItems = useMemo(() => tab === "library" && lang !== "es" && lang !== "en" ? LIBRARY.map((outlet) => ({ id: outlet.id, text: outlet.about.en, lang: "en" })) : [], [tab, lang]);
+  const abouts = useTranslated(aboutItems, lang);
 
   const highlight = useMemo(() => {
     if (tab !== "library") return [];
@@ -471,7 +474,7 @@ export function PulsoApp() {
           onClick={() => { setOutletFilter((current) => current === outlet.id ? "" : outlet.id); setVisible(PAGE); }}>
           <span className="book-spine" style={{ "--h": (outlet.id.length * 47) % 360 } as React.CSSProperties} />
           <strong>{outlet.name}</strong>
-          <small className="book-about">{lang === "es" || lang === "pt" || lang === "it" ? outlet.about.es : outlet.about.en}</small>
+          <small className="book-about" dir="auto">{lang === "es" ? outlet.about.es : abouts.get(outlet.id) ?? outlet.about.en}</small>
           <span className="book-block">{outlet.blockedIn.length
             ? <>⛔ {outlet.blockedIn.map((code) => `${flag(code)} ${countryName(code, lang)}`).join(" · ")}{outlet.since && ` · ${t("library.since")} ${outlet.since}`}</>
             : <>✦ {t("library.noBlock")}</>}</span>

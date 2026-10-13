@@ -8,6 +8,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:net";
+import { networkInterfaces } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,6 +60,10 @@ while (!(await free(port))) port++;
 const url = `http://localhost:${port}`;
 
 say(`Iniciando Pulso Global en ${url} (cierra esta ventana para apagarlo)`);
+const lan = Object.values(networkInterfaces()).flat()
+  .filter((item) => item && item.family === "IPv4" && !item.internal && !item.address.startsWith("169.254."))
+  .map((item) => `http://${item.address}:${port}`);
+if (lan.length) say(`Teléfonos en tu misma red Wi-Fi (aunque no haya Internet): ${lan.join("  ")}`);
 const server = spawn(npm, ["start", "--", "-p", String(port)], { cwd: root, stdio: "inherit", shell: windows });
 server.on("exit", (code) => process.exit(code ?? 0));
 
