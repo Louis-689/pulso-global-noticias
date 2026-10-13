@@ -7,6 +7,8 @@ import type { DictKey, Lang } from "@/lib/i18n";
 import { accessRoutes } from "@/lib/library";
 import { isTrustedHost } from "@/lib/trusted";
 import type { PulseArticle } from "@/lib/pulse-types";
+import { translateMany } from "@/lib/translate-client";
+import { fitBytes, QrCode } from "./qr-code";
 import { Bookmark, Cover } from "./story-card";
 import { useDialog } from "./use-dialog";
 
@@ -24,6 +26,7 @@ type Props = {
 };
 
 type FullText = { state: "idle" | "loading" | "failed" } | { state: "ok"; paragraphs: string[] };
+type Translation = { title?: string; summary?: string; paragraphs?: Array<string | null>; state: "idle" | "loading" | "ok" | "failed" };
 
 const CRITICAL = ["critical.1", "critical.2", "critical.3", "critical.4"] as const;
 
@@ -38,7 +41,25 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
   const [checks, setChecks] = useState<boolean[]>([false, false, false, false]);
   const doneRef = useRef<HTMLParagraphElement>(null);
   const [full, setFull] = useState<FullText>({ state: "idle" });
-  useEffect(() => { setChecks([false, false, false, false]); setFull({ state: "idle" }); }, [shown?.id]);
+  const [qr, setQr] = useState(false);
+  const foreign = !!shown?.lang && shown.lang !== lang;
+  // Stories in another language open translated; "Ver original" switches back.
+  const [translating, setTranslating] = useState(foreign);
+  const [tx, setTx] = useState<Translation>({ state: "idle" });
+  useEffect(() => { setChecks([false, false, false, false]); setFull({ state: "idle" }); setQr(false); setTx({ state: "idle" }); setTranslating(!!shown?.lang && shown.lang !== lang); }, [shown?.id, shown?.lang, lang]);
+  useEffect(() => {
+    if (!shown || !translating || !foreign) return;
+    const paragraphs = full.state === "ok" ? full.paragraphs : [];
+    if (tx.state === "loading" || (tx.state !== "idle" && (tx.paragraphs?.length ?? 0) >= paragraphs.length)) return;
+    const id = shown.id;
+    const texts = [shown.title, shown.summary ?? "", ...paragraphs];
+    setTx((current) => ({ ...current, state: "loading" }));
+    void translateMany(texts, shown.lang, lang).then((out) => {
+      if (shownRef.current !== id) return;
+      const [title, summary, ...rest] = out;
+      setTx({ title: title ?? undefined, summary: summary ?? undefined, paragraphs: rest, state: title || rest.some(Boolean) ? "ok" : "failed" });
+    });
+  }, [shown, translating, foreign, full, lang, tx.state, tx.paragraphs?.length]);
   const allChecked = checks.every(Boolean);
   useEffect(() => {
     if (allChecked && doneRef.current) gsap.fromTo(doneRef.current, { scale: 0.6, autoAlpha: 0 }, { scale: 1, autoAlpha: 1, duration: 0.6, ease: "elastic.out(1, 0.5)" });
@@ -74,6 +95,10 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
   }, [article, onClose]);
 
   if (!shown) return null;
+  const showTx = translating && foreign && tx.state === "ok";
+  const title = showTx && tx.title ? tx.title : shown.title;
+  const summary = showTx && tx.summary ? tx.summary : shown.summary;
+  const qrText = [title, `${sourceLabel(shown)} · ${new Date(shown.publishedAt || shown.seenDate).toISOString().slice(0, 10)}`, summary ? fitBytes(summary, 380) : "", shown.url].filter(Boolean).join("\n");
   const routes = accessRoutes(shown.url, lang === "zh" ? "zh-CN" : lang);
   const blocked = shown.outlet?.blockedIn ?? [];
 
@@ -116,8 +141,13 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
         <span>{relativeTime(shown.publishedAt || shown.seenDate, lang)}</span>
         <span>{new Date(shown.seenDate).toLocaleString(lang === "zh" ? "zh-CN" : lang)}</span>
       </div>
-      <h2 className="reader-title reader-reveal" dir="auto">{shown.title}</h2>
-      {shown.summary && <p className="reader-summary reader-reveal" dir="auto">{shown.summary}</p>}
+      <h2 className="reader-title reader-reveal" dir="auto">{title}</h2>
+      {summary && <p className="reader-summary reader-reveal" dir="auto">{summary}</p>}
+      {foreign && <div className="reader-translate reader-reveal">
+        <button onClick={() => setTranslating((value) => !value)} disabled={tx.state === "loading"}>🌐 {tx.state === "loading" ? t("tr.working") : showTx ? `${t("tr.original")} (${shown.lang!.toUpperCase()})` : t("tr.button")}</button>
+        {showTx && <small>{t("tr.auto")}</small>}
+        {translating && tx.state === "failed" && <small className="warn">{t("tr.failed")}</small>}
+      </div>}
 
       {shown.kind === "news" && <div className={`reader-trust reader-reveal${shown.confirmedBy?.length ? " ok" : ""}`}>
         {shown.confirmedBy?.length
@@ -128,12 +158,18 @@ export function Reader({ article, lang, t, saved, onClose, onSave, onCountry, re
       <div className="reader-actions reader-reveal">
         <button onClick={() => onSave(shown)} className={saved ? "on" : ""}><Bookmark filled={saved} /> {saved ? t("card.saved") : t("card.save")}</button>
         <button onClick={() => void share()}>🔗 {copied ? t("reader.copied") : t("reader.share")}</button>
+        <button onClick={() => setQr((value) => !value)} aria-pressed={qr}>▦ {t("qr.button")}</button>
         {!lite && <a href={`https://www.youtube.com/results?search_query=${encodeURIComponent(shown.title)}`} target="_blank" rel="noopener noreferrer">🎬 {t("card.video")}</a>}
       </div>
 
+      {qr && <div className="reader-qr">
+        <QrCode text={qrText} label={t("qr.button")} />
+        <p>📱 {t("qr.hint")}</p>
+      </div>}
+
       {readable && <section className="reader-reveal reader-full">
         {full.state === "ok"
-          ? <><p className="reader-note">📖 {t("reader.readHereHint")}</p><div className="full-text" dir="auto">{full.paragraphs.map((text, index) => <p key={index}>{text}</p>)}</div></>
+          ? <><p className="reader-note">📖 {t("reader.readHereHint")}</p><div className="full-text" dir="auto">{full.paragraphs.map((text, index) => <p key={index}>{(showTx && tx.paragraphs?.[index]) || text}</p>)}</div></>
           : <button className="btn btn-primary" onClick={() => void readHere()} disabled={full.state === "loading"}>📖 {full.state === "loading" ? t("reader.reading") : t("reader.readHere")}</button>}
         {full.state === "failed" && <p className="reader-note warn">{t("reader.readFailed")}</p>}
       </section>}

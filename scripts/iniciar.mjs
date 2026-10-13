@@ -34,9 +34,12 @@ function newest(path) {
   return Math.max(info.mtimeMs, ...readdirSync(path).map((name) => newest(join(path, name))));
 }
 
-if (!existsSync(join(root, "node_modules"))) {
-  say("Instalando lo necesario (solo la primera vez, tarda un par de minutos)…");
-  run(existsSync(join(root, "package-lock.json")) ? ["ci"] : ["install"]);
+// Install the first time, and again when an update brings new dependencies.
+const lock = join(root, "package-lock.json");
+const installed = join(root, "node_modules", ".package-lock.json");
+if (!existsSync(join(root, "node_modules")) || (existsSync(lock) && (!existsSync(installed) || statSync(installed).mtimeMs < statSync(lock).mtimeMs))) {
+  say("Instalando lo necesario (tarda un par de minutos)…");
+  run(existsSync(lock) ? ["ci"] : ["install"]);
 }
 
 const buildId = join(root, ".next", "BUILD_ID");

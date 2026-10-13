@@ -427,3 +427,20 @@ html[data-lite="1"] { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   html { scroll-behavior: auto; }
 }
+
+/* v2.4: language, translation, QR and no-Internet routes */
+.feed-head { flex-wrap: wrap; }
+.lang-toggle { margin-inline-start: auto; height: 40px; padding: 0 16px; border-radius: 999px; background: #fff; border: 2px solid var(--line-strong); font-size: 14px; font-weight: 900; color: var(--ink); box-shadow: 0 4px 0 var(--line-strong); transition: transform 0.15s; }
+.lang-toggle:hover { transform: translateY(-2px); }
+.lang-toggle.on { background: var(--sky); border-color: var(--sky); color: #fff; box-shadow: 0 4px 0 #1f9ad1; }
+.badge-lang { background: #e3f4ff; color: #0b5d8a; }
+.reader-actions { flex-wrap: wrap; }
+.reader-translate { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.reader-translate button { height: 40px; padding: 0 16px; border-radius: 999px; background: #e3f4ff; color: #0b5d8a; font-weight: 900; }
+.reader-translate small { color: var(--muted); font-weight: 700; }
+.reader-translate small.warn { color: var(--coral); }
+.reader-qr { display: flex; align-items: center; gap: 16px; margin-top: 16px; padding: 16px; border-radius: var(--radius); background: #f4effc; }
+.reader-qr p { margin: 0; font-weight: 800; font-size: 14px; }
+.qr { width: min(220px, 48vw); flex: none; border-radius: 12px; }
+.nonet-head { margin-top: 28px; }
+@media (max-width: 560px) { .reader-qr { flex-direction: column; text-align: center; } .lang-toggle { margin-inline-start: 0; } }

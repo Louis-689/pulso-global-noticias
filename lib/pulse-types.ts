@@ -1,7 +1,7 @@
 export const PULSE_TIMESPANS = ["1h", "6h", "12h", "24h", "48h", "7d", "30d", "365d"] as const;
 export type PulseTimespan = (typeof PULSE_TIMESPANS)[number];
 export type PulseMode = "news" | "early" | "library";
-export type PulseCategory = "all" | "politics" | "economy" | "technology" | "science" | "health" | "climate" | "security" | "culture" | "sports" | "education";
+export type PulseCategory = "all" | "politics" | "economy" | "technology" | "science" | "health" | "climate" | "security" | "culture" | "sports" | "education" | "factcheck";
 
 export type MentionedCountry = { code: string; name: string; lat: number; lng: number; evidence: string };
 export type PulseArticle = {
@@ -13,6 +13,8 @@ export type PulseArticle = {
   destinationHost: string;
   sourceCountry: string;
   language: string;
+  /** ISO 639-1 code of the headline ("es", "en"…), when known. */
+  lang?: string;
   seenDate: string;
   publishedAt: string | null;
   timestampBasis: "published" | "observed" | "event";

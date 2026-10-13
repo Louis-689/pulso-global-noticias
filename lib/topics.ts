@@ -13,6 +13,7 @@ export const TOPICS: Record<PulseCategory, { icon: string; color: string }> = {
   culture: { icon: "🎭", color: "#ec4899" },
   sports: { icon: "⚽", color: "#f97316" },
   education: { icon: "📚", color: "#0ea5e9" },
+  factcheck: { icon: "🕵️", color: "#e11d48" },
 };
 
 export function topicOf(value: string | undefined) {

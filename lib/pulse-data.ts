@@ -1,4 +1,5 @@
 import countriesData from "./country-data.json";
+import { detectLang, langCode } from "./lang";
 import type { MentionedCountry, PulseArticle, PulseConnection, PulsePoint, PulseTimespan, PulseView } from "./pulse-types";
 
 type CountryRecord = { code: string; numeric: string; name: string; commonEnglish: string; officialEnglish: string; officialSpanish: string; lat: number; lng: number };
@@ -142,7 +143,12 @@ function stableId(text: string): string {
   return `article-${(hash >>> 0).toString(36)}`;
 }
 
-export type ArticleContext = { provider: string; kind?: PulseArticle["kind"]; timestampBasis?: PulseArticle["timestampBasis"]; sourceName?: string; reviewStatus?: PulseArticle["reviewStatus"] };
+function langField(title: string, declared?: string) {
+  const lang = detectLang(title, declared);
+  return lang ? { lang } : {};
+}
+
+export type ArticleContext = { provider: string; lang?: string; kind?: PulseArticle["kind"]; timestampBasis?: PulseArticle["timestampBasis"]; sourceName?: string; reviewStatus?: PulseArticle["reviewStatus"] };
 export function normalizeArticle(raw: unknown, context: ArticleContext): PulseArticle | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const record = raw as Record<string, unknown>;
@@ -169,7 +175,7 @@ export function normalizeArticle(raw: unknown, context: ArticleContext): PulseAr
     ? { lat: rawLocation.lat, lng: rawLocation.lng, label: cleanText(rawLocation.label) || title } : undefined;
   return {
     id: stableId(url), url, title, domain: destinationHost, sourceName, destinationHost, sourceHost, ...(summary ? { summary } : {}),
-    sourceCountry: cleanText(record.sourcecountry, 80), language: cleanText(record.language, 30) || "No indicado",
+    sourceCountry: cleanText(record.sourcecountry, 80), language: cleanText(record.language, 30) || "No indicado", ...langField(title, context.lang ?? langCode(record.language)),
     seenDate, publishedAt: timestampBasis === "published" ? seenDate : null, timestampBasis,
     provider: context.provider, kind: context.kind ?? "news", reviewStatus: context.reviewStatus ?? "unknown", ...(media ? { media } : {}), ...(video ? { video } : {}),
     mentionedCountries: detectMentionedCountries(title), ...(location ? { location } : {}), ...lexicalTone(title),

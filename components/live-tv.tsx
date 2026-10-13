@@ -39,7 +39,7 @@ export function LiveTV({ lang, t }: { lang: string; t: (key: DictKey) => string 
       </div>
       <div className="tv-channels" role="tablist">
         {channels.map((item) => <button key={item.id} role="tab" aria-selected={item.id === active} className={item.id === active ? "on" : ""} onClick={() => setActive(item.id)}>
-          <span className="tv-live">LIVE</span>
+          <span className="tv-live">{t("tv.live")}</span>
           <strong>{item.name}</strong>
           <small>{item.lang.toUpperCase()}</small>
         </button>)}

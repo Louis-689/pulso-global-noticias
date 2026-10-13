@@ -6,7 +6,7 @@ import { sourceLabel } from "@/lib/format";
 import type { PulseArticle } from "@/lib/pulse-types";
 
 /** Endless breaking-news strip. Hover or focus pauses it. */
-export function Ticker({ label, articles, onOpen }: { label: string; articles: PulseArticle[]; onOpen: (article: PulseArticle) => void }) {
+export function Ticker({ label, articles, onOpen, titles }: { label: string; articles: PulseArticle[]; onOpen: (article: PulseArticle) => void; titles?: Map<string, string> }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const key = articles.map((article) => article.id).join();
 
@@ -33,7 +33,7 @@ export function Ticker({ label, articles, onOpen }: { label: string; articles: P
     <div className="ticker-window">
       <div className="ticker-track" ref={trackRef}>
         {items.map((article, index) => <button key={`${article.id}-${index}`} tabIndex={index < articles.length ? 0 : -1} aria-hidden={index >= articles.length} onClick={() => onOpen(article)}>
-          <b>{sourceLabel(article)}</b><span dir="auto">{article.title}</span>
+          <b>{sourceLabel(article)}</b><span dir="auto">{titles?.get(article.id) ?? article.title}</span>
         </button>)}
       </div>
     </div>

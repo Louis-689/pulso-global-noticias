@@ -44,7 +44,10 @@ En 2020, Reporteros Sin Fronteras construyó la *Uncensored Library* dentro de M
 | 📖 | **Leer aquí** | El servidor trae el texto del artículo, así que basta con llegar a Pulso Global. Las imágenes también pasan por el servidor. |
 | 🔓 | **Rutas alternativas** | Cada noticia ofrece la fuente original, una copia en Archive.org, otra en archive.today y el proxy de Google Translate. |
 | 🪶 | **Modo ligero** | Sin imágenes, videos ni animaciones, para conexiones lentas, caras o vigiladas. |
-| 💾 | **Sin conexión** | La app guarda las últimas noticias y abre aunque se caiga Internet. «Descargar noticias» crea un único archivo para compartir. |
+| 🕵️ | **Desmentidos** | Verificadores de datos (Maldita, Chequeado, Full Fact, PolitiFact…) que desmontan bulos y propaganda, para quien vive donde tergiversan las noticias. |
+| 🗣 | **Todo en tu idioma** | Las noticias llegan de ediciones y medios en el idioma elegido. Las de otros idiomas se traducen solas (en el propio navegador cuando es posible) y siempre puedes ver el original. |
+| 💾 | **Sin conexión** | La app guarda las últimas noticias y abre aunque se caiga Internet. «Descargar noticias» crea un único archivo, traducido y con el texto completo de las principales noticias, para compartir. |
+| 📦 | **Sin Internet también llega** | El archivo de noticias puede viajar por USB o tarjeta SD (como el «Paquete Semanal» de Cuba), de teléfono a teléfono con Briar, o por satélite con Toosheh. Cada noticia tiene un **código QR** que otro teléfono lee con la cámara, sin red. La guía también explica la radio de onda corta y Wikipedia sin conexión (Kiwix). |
 | 🧅 | **Acceso seguro** | Guía de Tor Browser (también por correo con GetTor), Psiphon y Snowflake, con consejos de seguridad. |
 | 🌍 | **Globo interactivo** | Toca un país para ver sus noticias. Los arcos unen países que aparecen juntos en un titular. |
 | 📺 | **TV en vivo** | Canales internacionales en directo (France 24, DW, Al Jazeera, euronews, NHK…), ordenados por tu idioma. |
@@ -120,8 +123,10 @@ Para apagarlo, cierra la ventana negra (o pulsa `Ctrl + C`). La próxima vez arr
 4. ¿El medio está bloqueado? Usa las **rutas alternativas** del lector.
 5. Pulsa **✅ Solo confirmadas** para ver únicamente noticias confirmadas.
 6. ¿Conexión lenta o vigilada? Activa **🪶 Ligero**.
-7. Pulsa **🛡️** para ver herramientas de acceso seguro, o **⬇ Descargar noticias** para llevártelas sin Internet.
-8. Desde el navegador del móvil puedes **instalarla como app**: menú → «Añadir a pantalla de inicio».
+7. Pulsa **🛡️** para ver herramientas de acceso seguro y caminos sin Internet, o **⬇ Descargar noticias** para llevártelas en un archivo.
+8. ¿Ves una noticia en otro idioma? Se traduce sola; **🌐 Ver original** muestra el texto del medio. El botón **🌐 +N en otros idiomas** suma las noticias del resto del mundo.
+9. **▦ Código QR** en el lector: otro teléfono lo escanea con la cámara y recibe el titular, el resumen y el enlace sin Internet.
+10. Desde el navegador del móvil puedes **instalarla como app**: menú → «Añadir a pantalla de inicio».
 
 ## 🌐 Publicarlo en Internet (y crear espejos)
 
@@ -139,7 +144,7 @@ Un solo sitio es fácil de bloquear. Cuantas más copias haya, más difícil es 
 
 ## 🗣 Idiomas
 
-Español, English, Português, Français, Deutsch, Italiano, Русский, العربية (de derecha a izquierda), 中文, 日本語 y हिन्दी. El idioma elegido también prioriza noticias en ese idioma.
+Español, English, Português, Français, Deutsch, Italiano, Русский, العربية (de derecha a izquierda), 中文, 日本語 y हिन्दी. Al elegir un idioma, la portada muestra solo noticias en ese idioma, traídas de varias ediciones regionales y medios propios (BBC, France 24, DW, Noticias ONU…). Las noticias de otros idiomas se traducen automáticamente: primero con el traductor integrado del navegador (Chrome), que funciona sin enviar nada fuera; si no está, con el servidor de Pulso Global (MyMemory y, como respaldo, el traductor web de Google).
 
 ## 🤝 Cómo ayudar
 
@@ -174,6 +179,7 @@ Tecnología: Next.js 16, React 19, TypeScript, GSAP 3 para las animaciones y d3-
 
 - **Ninguna app puede garantizar que una noticia sea verdad.** Pulso Global garantiza de dónde viene: solo medios con estándares editoriales, siempre con enlace a la fuente y el número de medios que la confirman.
 - La confirmación compara palabras y países de los titulares, así que puede fallar entre idiomas distintos.
+- La traducción automática puede equivocarse. Por eso siempre está el botón «Ver original».
 - Los bloqueos cambian con el tiempo. La biblioteca se basa en reportes públicos (OONI, RSF, VE sin Filtro).
 - Usar herramientas para saltar la censura puede ser peligroso en algunos países. Cada persona conoce mejor sus riesgos.
 
@@ -190,7 +196,10 @@ Tecnología: Next.js 16, React 19, TypeScript, GSAP 3 para las animaciones y d3-
 - Marks each story as **"Confirmed by N outlets"** when other trusted outlets report it.
 - Includes a **Free Library** of 15 outlets blocked somewhere (plus Global Voices), plus alternative routes to reach them (Archive.org, archive.today, Google Translate proxy).
 - **Read here:** the server fetches the article text, so readers only need to reach Pulso Global. Images go through the server too.
-- **Lite mode**, **offline reading**, a single-file **download to share by USB or Bluetooth**, and a **safe access** guide (Tor, Psiphon, Snowflake).
+- **Your language first:** the feed comes from editions and outlets in the language you pick; stories in other languages are machine-translated (on-device in Chrome when available), always with the original one tap away.
+- **Fact checks:** a section with IFCN fact-checkers that debunk rumors and propaganda.
+- **Lite mode**, **offline reading**, and a single-file **news package** (translated, with full text of the top stories) to pass on by USB, SD card, Briar or satellite datacasting such as Toosheh. Every story also has a **QR code** another phone can scan with no Internet.
+- A **safe access** guide (Tor, Psiphon, Snowflake) and ways news travels with no Internet at all (satellite, phone-to-phone mesh, shortwave radio, Kiwix).
 - Interactive globe, live TV and 11 UI languages.
 
 **Run it on your computer** (Windows, macOS, Linux). Install [Node.js](https://nodejs.org) 20+, download this repo (*Code → Download ZIP*), then:

@@ -1,6 +1,7 @@
 import type { NewsLanguage } from "./pulse-service";
 import { EXTRA, type ExtraKey } from "./i18n-extra";
 import { TRUST, type TrustKey } from "./i18n-trust";
+import { REACH, type ReachKey } from "./i18n-reach";
 
 export type Lang = NewsLanguage;
 export const LANGUAGES: Array<{ code: Lang; native: string; rtl?: boolean; speech: string }> = [
@@ -54,7 +55,7 @@ const es = {
 };
 
 type BaseKey = keyof typeof es;
-export type DictKey = BaseKey | ExtraKey | TrustKey;
+export type DictKey = BaseKey | ExtraKey | TrustKey | ReachKey;
 type Dict = Record<BaseKey, string>;
 
 const en: Dict = {
@@ -410,7 +411,7 @@ const hi: Dict = {
 export const DICTIONARIES: Record<Lang, Dict> = { es, en, pt, fr, de, it, ru, ar, zh, ja, hi };
 
 export function translator(lang: Lang) {
-  const dict = { ...es, ...EXTRA.es, ...TRUST.es, ...(DICTIONARIES[lang] ?? es), ...(EXTRA[lang] ?? {}), ...(TRUST[lang] ?? {}) } as Record<DictKey, string>;
+  const dict = { ...es, ...EXTRA.es, ...TRUST.es, ...REACH.es, ...(DICTIONARIES[lang] ?? es), ...(EXTRA[lang] ?? {}), ...(TRUST[lang] ?? {}), ...(REACH[lang] ?? {}) } as Record<DictKey, string>;
   return (key: DictKey) => dict[key] ?? key;
 }
 

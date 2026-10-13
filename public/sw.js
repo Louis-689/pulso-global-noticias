@@ -3,7 +3,7 @@
  * the last stories it saw: news requests are network-first with a cached
  * fallback, and the app shell and static assets are kept for offline starts.
  * Nothing personal is cached: the API carries no accounts or cookies. */
-const VERSION = "pulso-v2.3";
+const VERSION = "pulso-v2.4";
 const IMAGES = "pulso-img";
 const MAX_IMAGES = 150;
 const SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];

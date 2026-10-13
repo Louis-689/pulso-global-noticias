@@ -16,6 +16,8 @@ type Props = {
   onOpen: (article: PulseArticle) => void;
   onSave: (article: PulseArticle, origin?: HTMLElement) => void;
   lite?: boolean;
+  /** Headline translated into the reader's language. */
+  translated?: string;
 };
 
 export function Bookmark({ filled }: { filled?: boolean }) {
@@ -48,11 +50,12 @@ export function Cover({ article, lead, lite }: { article: PulseArticle; lead?: b
   </div>;
 }
 
-export function StoryCard({ article, lang, t, lead, fresh, saved, onOpen, onSave, lite }: Props) {
+export function StoryCard({ article, lang, t, lead, fresh, saved, onOpen, onSave, lite, translated }: Props) {
+  const title = translated ?? article.title;
   const blocked = article.outlet?.blockedIn ?? [];
   const topic = topicOf(article.topic);
   return <article className={`card${lead ? " card-lead" : ""}${fresh ? " is-fresh" : ""}`} style={{ "--tc": topic.color } as React.CSSProperties} data-id={article.id}>
-    <button className="card-hit" onClick={() => onOpen(article)} aria-label={`${t("card.read")}: ${article.title}`}>
+    <button className="card-hit" onClick={() => onOpen(article)} aria-label={`${t("card.read")}: ${title}`}>
       <Cover article={article} lead={lead} lite={lite} />
       <div className="card-body">
         <div className="card-meta">
@@ -60,8 +63,9 @@ export function StoryCard({ article, lang, t, lead, fresh, saved, onOpen, onSave
           {article.confirmedBy?.length ? <span className="badge badge-ok" title={t("trust.confirmed").replace("{n}", String(article.confirmedBy.length))}>✅ {article.confirmedBy.length + 1}</span> : null}
           {article.video && <span className="badge badge-video">▶ {t("card.video")}</span>}
           {fresh && <span className="badge badge-new">{t("feed.new")}</span>}
+          {translated && <span className="badge badge-lang" title={`${t("tr.auto")} · ${article.title}`}>🌐 {article.lang?.toUpperCase()}</span>}
         </div>
-        <h3 className="card-title" dir="auto">{article.title}</h3>
+        <h3 className="card-title" dir="auto">{title}</h3>
         <div className="card-foot">
           <span className="card-source">{sourceLabel(article)}</span>
           <time dateTime={article.seenDate}>{relativeTime(article.publishedAt || article.seenDate, lang)}</time>

@@ -21,12 +21,16 @@ import { StoryCard } from "./story-card";
 import { Ticker } from "./ticker";
 import { useDialog } from "./use-dialog";
 import { usePulse } from "./use-pulse";
+import { useTranslatedTitles } from "./use-translations";
+import { translateMany } from "@/lib/translate-client";
+import { isTrustedHost } from "@/lib/trusted";
+import type { OfflineStory } from "@/lib/offline";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger, SplitText);
 
 type Tab = "news" | "library" | "signals" | "saved";
 const TABS: Tab[] = ["news", "library", "signals", "saved"];
-const CATEGORIES: PulseCategory[] = ["all", "politics", "economy", "security", "technology", "science", "health", "climate", "culture", "sports", "education"];
+const CATEGORIES: PulseCategory[] = ["all", "factcheck", "politics", "economy", "security", "technology", "science", "health", "climate", "culture", "sports", "education"];
 const SIGNAL_CATEGORIES = new Set<PulseCategory>(["all", "science", "technology"]);
 const WINDOWS: PulseTimespan[] = ["1h", "6h", "24h", "48h", "7d"];
 const PAGE = 24;
@@ -68,6 +72,8 @@ export function PulsoApp() {
   const [mounted, setMounted] = useState(false);
   const [lite, setLite] = useState(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [otherLangs, setOtherLangs] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -118,16 +124,30 @@ export function PulsoApp() {
     .map((item) => ({ code: item.code, name: countryName(item.code, lang, item.name), lat: item.lat, lng: item.lng }))
     .sort((a, b) => a.name.localeCompare(b.name, lang)), [lang, mounted]);
 
-  const articles = useMemo(() => {
+  const inMyLang = useCallback((article: PulseArticle) => !article.lang || article.lang === lang, [lang]);
+  const allArticles = useMemo(() => {
     if (tab === "saved") return [...saved.archive].reverse();
     const list = data && data.mode === mode ? data.articles : [];
     const confirmedOnly = verifiedOnly && tab !== "signals";
     return list.filter((article) => (!outletFilter || article.outlet?.id === outletFilter) && (!confirmedOnly || article.confirmedBy?.length));
   }, [tab, saved.archive, data, mode, outletFilter, verifiedOnly]);
+  // The news feed speaks the reader's language; other languages come on request,
+  // translated. Library and signals are mostly foreign outlets, so they are translated instead.
+  const mine = useMemo(() => tab === "news" ? allArticles.filter(inMyLang) : allArticles, [tab, allArticles, inMyLang]);
+  const showAll = otherLangs || mine.length < 6;
+  const articles = showAll ? allArticles : mine;
+  const otherCount = allArticles.length - mine.length;
   const lead = articles.find((article) => article.media) ?? articles[0];
   const rest = articles.filter((article) => article !== lead).slice(0, visible - 1);
   // Polling refreshes keep the same key, so cards already on screen don't animate again.
-  const listKey = `${tab}|${category}|${timespan}|${country}|${query}|${outletFilter}|${verifiedOnly}`;
+  const listKey = `${tab}|${category}|${timespan}|${country}|${query}|${outletFilter}|${verifiedOnly}|${showAll}`;
+  const tickerArticles = useMemo(() => {
+    const list = data?.mode === "news" ? data.articles : [];
+    const own = list.filter(inMyLang);
+    return (own.length >= 6 ? own : list).slice(0, 14);
+  }, [data, inMyLang]);
+  const onScreen = useMemo(() => [...(lead ? [lead] : []), ...rest, ...tickerArticles], [lead, rest, tickerArticles]);
+  const titles = useTranslatedTitles(onScreen, lang);
 
   const highlight = useMemo(() => {
     if (tab !== "library") return [];
@@ -273,11 +293,44 @@ export function PulsoApp() {
       return !value;
     });
   }
-  function downloadOffline() {
-    const list = articles.length ? articles : data?.articles ?? [];
+  /** Builds the shareable file: in the reader's language, with the full text of the top stories. */
+  async function downloadOffline() {
+    if (preparing) return;
+    setPreparing(true);
+    try { await buildAndSave(); } finally { setPreparing(false); }
+  }
+  async function buildAndSave() {
+    const list = (articles.length ? articles : data?.articles ?? []).slice(0, 60);
+    const stories: OfflineStory[] = list.map((article) => ({ ...article }));
+    const top = stories.filter((story) => story.kind === "news" && isTrustedHost(story.destinationHost)).slice(0, 15);
+    let next = 0;
+    await Promise.all(Array.from({ length: 3 }, async () => {
+      while (next < top.length) {
+        const story = top[next++];
+        try {
+          const controller = new AbortController();
+          const timer = window.setTimeout(() => controller.abort(), 9000);
+          const response = await fetch(`/api/read?url=${encodeURIComponent(story.url)}`, { signal: controller.signal });
+          window.clearTimeout(timer);
+          const body = await response.json() as { paragraphs?: string[] };
+          if (response.ok && body.paragraphs?.length) story.paragraphs = body.paragraphs.slice(0, 40);
+        } catch { /* keep the summary */ }
+      }
+    }));
+    // Foreign stories travel translated, with the original headline underneath.
+    const groups = new Map<string, OfflineStory[]>();
+    for (const story of stories) if (story.lang && story.lang !== lang) groups.set(story.lang, [...(groups.get(story.lang) ?? []), story]);
+    for (const [from, group] of groups) {
+      const out = await translateMany(group.flatMap((story) => [story.title, story.summary ?? ""]), from, lang).catch(() => []);
+      group.forEach((story, index) => {
+        story.displayTitle = out[index * 2] ?? titles.get(story.id) ?? undefined;
+        story.displaySummary = out[index * 2 + 1] ?? undefined;
+      });
+    }
     const meta = LANGUAGES.find((item) => item.code === lang);
     const now = new Date();
-    const html = buildOfflineHtml(list, { title: `Pulso Global · ${feedTitle}`, lang, rtl: meta?.rtl, confirmedLabel: t("trust.confirmed"), generatedAt: now });
+    const html = buildOfflineHtml(stories, { title: `Pulso Global · ${feedTitle}`, lang, rtl: meta?.rtl, confirmedLabel: t("trust.confirmed"), generatedAt: now,
+      labels: { howTitle: t("offline.howTitle"), howText: t("offline.howText"), fullText: t("offline.fullText"), toc: t("offline.toc"), original: t("tr.original") } });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     link.download = `pulso-global-${now.toISOString().slice(0, 10)}.html`;
@@ -291,14 +344,14 @@ export function PulsoApp() {
     scrollToFeed();
   }
   function reset() {
-    setCategory("all"); setTimespan(tab === "library" ? "48h" : "24h"); setCountry(""); setQuery(""); setDraft(""); setOutletFilter(""); setVerifiedOnly(false); setVisible(PAGE);
+    setCategory("all"); setTimespan(tab === "library" ? "48h" : "24h"); setCountry(""); setQuery(""); setDraft(""); setOutletFilter(""); setVerifiedOnly(false); setOtherLangs(false); setVisible(PAGE);
   }
   function toggleSpeech() {
     if (!("speechSynthesis" in window)) return;
     if (speaking) { window.speechSynthesis.cancel(); setSpeaking(false); return; }
     const top = articles.slice(0, 5);
     if (!top.length) return;
-    const utterance = new SpeechSynthesisUtterance(top.map((article, index) => `${index + 1}. ${article.title}`).join(". "));
+    const utterance = new SpeechSynthesisUtterance(top.map((article, index) => `${index + 1}. ${titles.get(article.id) ?? article.title}`).join(". "));
     utterance.lang = LANGUAGES.find((item) => item.code === lang)?.speech ?? "es-ES";
     utterance.onend = utterance.onerror = () => setSpeaking(false);
     window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); setSpeaking(true);
@@ -308,7 +361,7 @@ export function PulsoApp() {
   const status = loading ? t("status.updating") : error ? t("status.offline") : cached ? t("status.cached") : data?.partial ? t("status.partial") : t("status.live");
   const statusTone = error ? "bad" : loading ? "busy" : cached || data?.partial ? "warn" : "ok";
   const feedTitle = t(`feed.${tab}` as DictKey);
-  const hasFilters = category !== "all" || !!country || !!query || !!outletFilter || verifiedOnly;
+  const hasFilters = category !== "all" || !!country || !!query || !!outletFilter || verifiedOnly || otherLangs;
   const blockedHere = tab === "library" ? highlight.length : 0;
 
   return <div className="app" ref={rootRef}>
@@ -351,7 +404,7 @@ export function PulsoApp() {
       </div>
     </header>
 
-    <Ticker label={t("ticker.label")} articles={(data?.articles ?? []).slice(0, 14)} onOpen={openArticle} />
+    <Ticker label={t("ticker.label")} articles={tickerArticles} onOpen={openArticle} titles={titles} />
 
     <section className="hero">
       <div className="hero-copy">
@@ -438,6 +491,9 @@ export function PulsoApp() {
       <div className="feed-head">
         <h2>{feedTitle}{country && <span className="feed-where"> · {flag(country)} {countryName(country, lang)}</span>}{query && <span className="feed-where"> · “{query}”</span>}</h2>
         <span className="feed-count">{tab === "saved" ? saved.ids.length : data ? articles.length : "…"}</span>
+        {tab === "news" && otherCount > 0 && mine.length >= 6 && <button className={`lang-toggle${otherLangs ? " on" : ""}`} onClick={() => { setOtherLangs((value) => !value); setVisible(PAGE); }} aria-pressed={otherLangs}>
+          🌐 {otherLangs ? t("lang.mine") : t("lang.more").replace("{n}", String(otherCount))}
+        </button>}
       </div>
       {loading && <div className="loadbar" aria-hidden="true"><i /></div>}
       {error && <div className="alert" role="alert"><span>{t("error.failed")}</span><button onClick={() => void refresh()}>{t("error.retry")}</button></div>}
@@ -451,8 +507,8 @@ export function PulsoApp() {
       </div>}
 
       {articles.length > 0 && <div className="grid" key={listKey.split("|").slice(0, 6).join("|")}>
-        {lead && <StoryCard article={lead} lead lang={lang} t={t} fresh={freshIds.has(lead.id)} saved={saved.ids.includes(lead.id)} onOpen={openArticle} onSave={toggleSaved} lite={lite} />}
-        {rest.map((article) => <StoryCard key={article.id} article={article} lang={lang} t={t} fresh={freshIds.has(article.id)} saved={saved.ids.includes(article.id)} onOpen={openArticle} onSave={toggleSaved} lite={lite} />)}
+        {lead && <StoryCard article={lead} lead lang={lang} t={t} fresh={freshIds.has(lead.id)} saved={saved.ids.includes(lead.id)} onOpen={openArticle} onSave={toggleSaved} lite={lite} translated={titles.get(lead.id)} />}
+        {rest.map((article) => <StoryCard key={article.id} article={article} lang={lang} t={t} fresh={freshIds.has(article.id)} saved={saved.ids.includes(article.id)} onOpen={openArticle} onSave={toggleSaved} lite={lite} translated={titles.get(article.id)} />)}
       </div>}
       {articles.length > visible && <button className="btn btn-ghost more" onClick={() => setVisible((value) => value + PAGE)}>{t("feed.more")} <span>+{Math.min(PAGE, articles.length - visible)}</span></button>}
       {data && tab === "news" && <p className="coverage">🛡️ {t("trust.policy")}{data.untrustedDropped ? ` ${t("trust.dropped").replace("{n}", String(data.untrustedDropped))}` : ""}</p>}
@@ -462,7 +518,7 @@ export function PulsoApp() {
       <p>🛡️ {t("safe.intro")}</p>
       <div>
         <button className="btn btn-ghost" onClick={() => setPanel("safe")}>{t("safe.title")}</button>
-        <button className="btn btn-primary" onClick={downloadOffline} disabled={!articles.length}>⬇ {t("safe.download")}</button>
+        <button className="btn btn-primary" onClick={() => void downloadOffline()} disabled={!articles.length || preparing}>⬇ {preparing ? t("offline.preparing") : t("safe.download")}</button>
       </div>
     </section>
 
@@ -493,7 +549,7 @@ export function PulsoApp() {
     {panel && <div className="modal-root" onClick={() => setPanel(null)}>
       <div className="modal modal-wide" ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={panel === "tv" ? t("tv.title") : t("safe.title")} onClick={(event) => event.stopPropagation()}>
         <button className="reader-close" onClick={() => setPanel(null)} aria-label={t("reader.close")}>✕</button>
-        {panel === "tv" ? <LiveTV lang={lang} t={t} /> : <SafeAccess t={t} onDownload={downloadOffline} canDownload={articles.length > 0} />}
+        {panel === "tv" ? <LiveTV lang={lang} t={t} /> : <SafeAccess t={t} onDownload={() => void downloadOffline()} canDownload={articles.length > 0} preparing={preparing} />}
       </div>
     </div>}
 
