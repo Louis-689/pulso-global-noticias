@@ -1,6 +1,6 @@
 export const PULSE_TIMESPANS = ["1h", "6h", "12h", "24h", "48h", "7d", "30d", "365d"] as const;
 export type PulseTimespan = (typeof PULSE_TIMESPANS)[number];
-export type PulseMode = "news" | "early";
+export type PulseMode = "news" | "early" | "library";
 export type PulseCategory = "all" | "politics" | "economy" | "technology" | "science" | "health" | "climate" | "security" | "culture" | "sports" | "education";
 
 export type MentionedCountry = { code: string; name: string; lat: number; lng: number; evidence: string };
@@ -20,9 +20,21 @@ export type PulseArticle = {
   kind: "news" | "earthquake" | "preprint" | "official";
   reviewStatus: "unknown" | "preliminary" | "reviewed" | "not-peer-reviewed";
   media?: { url: string; type: "image" | "video"; credit: string };
+  /** Playable video declared by the publisher (YouTube embed or MP4/WebM). */
+  video?: string;
+  /** First topic whose vocabulary appears in the headline (for color and icon). */
+  topic?: PulseCategory;
   mentionedCountries: MentionedCountry[];
   location?: { lat: number; lng: number; label: string };
   sentiment: number;
+  /** Host of the outlet that wrote it (differs from destinationHost for aggregator links). */
+  sourceHost?: string;
+  /** Short summary from the feed, when the publisher provides one. */
+  summary?: string;
+  /** Other trusted outlets that published the same story. */
+  confirmedBy?: string[];
+  /** Library mode: outlet that publishes it and where it is reported as blocked. */
+  outlet?: { id: string; blockedIn: string[]; stateFunded?: boolean };
   positiveTerms: string[];
   negativeTerms: string[];
 };
@@ -53,4 +65,6 @@ export type PulseResponse = PulseView & {
   sources: PulseSource[];
   errors: string[];
   coverageNote: string;
+  /** Headlines discarded because their outlet is not on the trusted list. */
+  untrustedDropped?: number;
 };

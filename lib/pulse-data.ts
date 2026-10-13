@@ -30,7 +30,8 @@ const aliases = countries.flatMap((country) => {
   return [...new Set(names.filter((name) => Boolean(name) && !ambiguousNames.has(fold(name))))]
     .filter((name) => name.length >= 4 || (extraAliases[country.code] ?? []).includes(name))
     .map((name) => ({ country, alias: fold(name), city: false }));
-}).concat(countries.flatMap((country) => (cityAliases[country.code] ?? []).map((name) => ({ country, alias: fold(name), city: true }))));
+}).concat(countries.flatMap((country) => (cityAliases[country.code] ?? []).map((name) => ({ country, alias: fold(name), city: true }))))
+  .map((entry) => ({ ...entry, pattern: new RegExp(`(^|[^\\p{L}\\p{N}])(${escapeRegex(entry.alias)})(?=$|[^\\p{L}\\p{N}])`, "gu") }));
 
 export function countrySearchName(code: string): { english: string; spanish: string } | null {
   const country = countryByCode.get(code.toUpperCase());
@@ -65,6 +66,23 @@ export function safeArticleUrl(value: unknown): string | null {
   } catch { return null; }
 }
 
+/** Only playable sources: YouTube embeds or direct MP4/WebM files. */
+export function playableVideo(url: string): string | null {
+  const safe = safeArticleUrl(url);
+  if (!safe || !safe.startsWith("https://")) return null;
+  const parsed = new URL(safe);
+  const host = parsed.hostname.replace(/^www\./, "");
+  if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    const id = parsed.pathname.match(/^\/(?:embed|v|shorts)\/([\w-]{11})/)?.[1] ?? parsed.searchParams.get("v");
+    return id && /^[\w-]{11}$/.test(id) ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+  }
+  if (host === "youtu.be") {
+    const id = parsed.pathname.slice(1, 12);
+    return /^[\w-]{11}$/.test(id) ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+  }
+  return /\.(mp4|webm)$/i.test(parsed.pathname) ? safe : null;
+}
+
 export function parseTimestamp(value: unknown): string | null {
   if (typeof value === "number") return Number.isFinite(value) && value >= 946684800000 && value <= 8640000000000000 ? new Date(value).toISOString() : null;
   if (typeof value !== "string" || value.length > 80) return null;
@@ -89,8 +107,9 @@ export function detectMentionedCountries(title: string): MentionedCountry[] {
   const text = fold(title);
   const hits: Array<{ start: number; end: number; country: CountryRecord; evidence: string }> = [];
   for (const entry of aliases) {
-    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])(${escapeRegex(entry.alias)})(?=$|[^\\p{L}\\p{N}])`, "gu");
-    for (const match of text.matchAll(pattern)) {
+    // Cheap substring check first: most aliases never appear in a given title.
+    if (!text.includes(entry.alias)) continue;
+    for (const match of text.matchAll(entry.pattern)) {
       const start = match.index + match[1].length;
       const original = title.slice(start, start + entry.alias.length);
       if (entry.city && original[0] === original[0]?.toLowerCase()) continue;
@@ -132,19 +151,27 @@ export function normalizeArticle(raw: unknown, context: ArticleContext): PulseAr
   const seenDate = parseTimestamp(record.timestamp ?? record.seendate ?? record.pubDate);
   if (!title || !url || !seenDate) return null;
   const destinationHost = new URL(url).hostname;
+  // Aggregators (Google News, GDELT) link through their own host; keep the real outlet.
+  const sourceUrl = safeArticleUrl(record.sourceUrl);
+  const domain = typeof record.domain === "string" && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(record.domain) ? record.domain.toLowerCase() : "";
+  const sourceHost = (sourceUrl ? new URL(sourceUrl).hostname : domain || destinationHost).replace(/^www\./, "");
+  const rawSummary = cleanText(record.summary, 420);
+  // Google News descriptions only repeat the headline and outlet.
+  const summary = rawSummary && !fold(rawSummary).startsWith(fold(title).slice(0, 40)) && rawSummary.length > 40 ? rawSummary : "";
   const sourceName = context.sourceName ?? (cleanText(record.sourceName || record.domain, 150) || destinationHost);
   const timestampBasis = context.timestampBasis ?? "published";
   const mediaUrl = safeArticleUrl(record.socialimage ?? record.mediaUrl ?? record.image);
   const mediaType = record.mediaType === "video" ? "video" : "image";
   const media = mediaUrl ? { url: mediaUrl, type: mediaType, credit: sourceName } as const : undefined;
+  const video = mediaType === "video" && mediaUrl ? playableVideo(mediaUrl) : null;
   const rawLocation = record.location as { lat?: unknown; lng?: unknown; label?: unknown } | undefined;
   const location = rawLocation && typeof rawLocation.lat === "number" && typeof rawLocation.lng === "number" && Number.isFinite(rawLocation.lat) && Number.isFinite(rawLocation.lng) && Math.abs(rawLocation.lat) <= 90 && Math.abs(rawLocation.lng) <= 180
     ? { lat: rawLocation.lat, lng: rawLocation.lng, label: cleanText(rawLocation.label) || title } : undefined;
   return {
-    id: stableId(url), url, title, domain: destinationHost, sourceName, destinationHost,
+    id: stableId(url), url, title, domain: destinationHost, sourceName, destinationHost, sourceHost, ...(summary ? { summary } : {}),
     sourceCountry: cleanText(record.sourcecountry, 80), language: cleanText(record.language, 30) || "No indicado",
     seenDate, publishedAt: timestampBasis === "published" ? seenDate : null, timestampBasis,
-    provider: context.provider, kind: context.kind ?? "news", reviewStatus: context.reviewStatus ?? "unknown", ...(media ? { media } : {}),
+    provider: context.provider, kind: context.kind ?? "news", reviewStatus: context.reviewStatus ?? "unknown", ...(media ? { media } : {}), ...(video ? { video } : {}),
     mentionedCountries: detectMentionedCountries(title), ...(location ? { location } : {}), ...lexicalTone(title),
   };
 }
@@ -202,9 +229,12 @@ export function derivePulse(input: PulseArticle[], options: { country?: string; 
 }
 
 export function parseRssItems(xml: string): Array<Record<string, unknown>> {
-  if (xml.length > 1_500_000 || /<!DOCTYPE|<!ENTITY/i.test(xml) || !/<rss\b/i.test(xml)) throw new Error("RSS inválido");
+  // RSS 2.0, RSS 1.0 (rdf:RDF) and Atom are all accepted; entities stay forbidden.
+  if (xml.length > 1_500_000 || /<!DOCTYPE|<!ENTITY/i.test(xml) || !/<(rss|rdf:RDF|feed)\b/i.test(xml)) throw new Error("RSS inválido");
+  const atom = !/<(rss|rdf:RDF)\b/i.test(xml);
   const articles: Array<Record<string, unknown>> = [];
-  for (const match of xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)) {
+  const itemPattern = atom ? /<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi : /<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi;
+  for (const match of xml.matchAll(itemPattern)) {
     const item = match[1];
     const pick = (tag: string) => cleanText(item.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"))?.[1], tag === "link" ? 2500 : 700);
     const pickAttribute = (tag: string, attribute: string) => cleanText(item.match(new RegExp(`<${tag}\\b[^>]*\\b${attribute}=["']([^"']+)["'][^>]*>`, "i"))?.[1], 2500);
@@ -224,7 +254,10 @@ export function parseRssItems(xml: string): Array<Record<string, unknown>> {
     const location = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
       ? { lat, lng, label: pick("gdacs:country") || pick("title") }
       : undefined;
-    articles.push({ title: pick("title"), url: pick("link"), sourceName: pick("source"), timestamp: pick("pubDate"), announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference"), ...(mediaUrl ? { mediaUrl, mediaType } : {}), ...(location ? { location } : {}) });
+    const atomLink = atom ? (pickAttribute('link(?=[^>]*rel=["\']alternate["\'])', "href") || pickAttribute("link", "href")) : "";
+    const timestamp = pick("pubDate") || pick("dc:date") || pick("published") || pick("updated");
+    const summary = cleanText(descriptionBlock || item.match(/<(summary|content)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/i)?.[2], 420);
+    articles.push({ title: pick("title"), url: atomLink || pick("link"), sourceName: pick("source"), sourceUrl: pickAttribute("source", "url"), summary, timestamp, announceType: pick("arxiv:announce_type"), journalReference: pick("arxiv:journal_reference"), ...(mediaUrl ? { mediaUrl, mediaType } : {}), ...(location ? { location } : {}) });
     if (articles.length >= 500) break;
   }
   return articles;

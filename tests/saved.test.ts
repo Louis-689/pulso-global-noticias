@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isSavedArticle, loadSaved, persistSaved } from "../components/eye/saved";
+import { isSavedArticle, loadSaved, persistSaved } from "../lib/saved";
 import type { PulseArticle } from "../lib/pulse-types";
 
 const article: PulseArticle = {
